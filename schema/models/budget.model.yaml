@@ -1,0 +1,190 @@
+# =============================================================================
+# Domain: budget
+# Entity: Budget / BudgetLine
+# Description: Budget control (pillar-finance F-6). Odoo community ships no
+#              budget source (account_budget is Enterprise), so this module
+#              owns its spec. A Budget is the header (identity, coverage,
+#              lifecycle, enforcement posture); each BudgetLine is ONE PLAN
+#              POSITION keyed (company, account, cost_center, fiscal_period) —
+#              the shared analytic dimension from the coverage map. Control
+#              semantics: only confirmed budgets participate; achieved amounts
+#              are read from the GL (accounting.ledgers, cross-schema SQL);
+#              enforcement is warn by default with a per-budget block override
+#              (owner-decided posture). The GL consult itself lives in
+#              backbone-accounting (BudgetControlPort); this module has NO
+#              Cargo edge into accounting — the deployed app adapts between
+#              the two.
+# =============================================================================
+
+models:
+  - name: Budget
+    collection: budgets
+    description: "A company budget: header lifecycle (draft → confirmed → closed/cancelled) + the warn/block enforcement posture for its positions."
+
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+
+      company_id:
+        type: uuid
+        attributes: ["@required", "@exclude_from_foreign_key_check"]
+        description: "Org owner # logical FK organization.Company.id"
+
+      code:
+        type: string
+        attributes: ["@required", "@max(30)"]
+        description: "Stable budget identifier (unique per company among live rows)"
+
+      name:
+        type: string
+        attributes: ["@required", "@max(100)"]
+        description: "Human-readable budget name"
+
+      description:
+        type: string?
+        attributes: ["@max(500)"]
+        description: "Free-text notes about the plan"
+
+      fiscal_year:
+        type: int
+        attributes: ["@required", "@min(2020)", "@max(2100)"]
+        description: "The fiscal year this budget plans"
+
+      date_from:
+        type: date
+        attributes: ["@required"]
+        description: "Coverage start (display/filter range)"
+
+      date_to:
+        type: date
+        attributes: ["@required"]
+        description: "Coverage end (display/filter range)"
+
+      status:
+        type: BudgetStatus
+        description: "Lifecycle: draft (editing) → confirmed (control active) → closed (frozen) | cancelled"
+
+      enforcement:
+        type: BudgetEnforcement
+        description: "What a breach does at the posting chokepoint: warn (log + proceed) or block (refuse). Warn is the default posture; block is the per-budget override."
+
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    relations:
+      lines:
+        type: BudgetLine[]
+        attributes: ["@one_to_many"]
+        description: "The plan positions"
+        inverse: budget
+
+    indexes:
+      - type: unique
+        fields: [company_id, code]
+        where: "deleted_at IS NULL"
+        description: "One live budget per code per company (soft-deleted codes may be reused)"
+      - type: index
+        fields: [company_id, status]
+        description: "Lifecycle queues: confirm/close/cancel worklists per company"
+      - type: index
+        fields: [company_id, fiscal_year]
+        description: "Per-year budget listing"
+
+  - name: BudgetLine
+    collection: budget_lines
+    description: "One budget position: a planned amount for (account, cost center, fiscal period). The control key is (company, account, cost_center, fiscal_period) — at most one live row ever, enforced unique including drafts so coverage is never ambiguous."
+
+    fields:
+      id:
+        type: uuid
+        attributes: ["@id", "@default(uuid)"]
+        description: "Unique record id"
+
+      budget_id:
+        type: uuid
+        attributes: ["@required", "@foreign_key(Budget.id)"]
+        description: "Owning budget"
+
+      company_id:
+        type: uuid
+        attributes: ["@required", "@exclude_from_foreign_key_check"]
+        description: "Denormalized tenant fence — must equal the owning budget's company"
+
+      account_id:
+        type: uuid
+        attributes: ["@required", "@exclude_from_foreign_key_check"]
+        description: "The GL account this position plans # logical FK accounting.Account.id"
+
+      cost_center_id:
+        type: uuid?
+        attributes: ["@exclude_from_foreign_key_check"]
+        description: "Cost center dimension; NULL = postings carrying no cost center (exact-key matching, never an aggregate rollup) # logical FK accounting.CostCenter.id"
+
+      fiscal_period_id:
+        type: uuid
+        attributes: ["@required", "@exclude_from_foreign_key_check"]
+        description: "The fiscal period this position plans; postings stamp the period they land in # logical FK accounting.FiscalPeriod.id"
+
+      fiscal_year:
+        type: int
+        attributes: ["@required", "@min(2020)", "@max(2100)"]
+        description: "Denormalized from the fiscal period (report projection)"
+
+      fiscal_month:
+        type: int?
+        attributes: ["@min(1)", "@max(12)"]
+        description: "Denormalized from the fiscal period (report projection)"
+
+      planned_amount:
+        type: decimal
+        attributes: ["@required", "@precision(18,2)", "@non_negative"]
+        description: "The plan. The write verbs require strictly > 0; the DB CHECK keeps it non-negative as the backstop."
+
+      notes:
+        type: string?
+        attributes: ["@max(500)"]
+        description: "Free-text notes about this position"
+
+      metadata:
+        type: Metadata
+        attributes: ["@audit_metadata"]
+        description: "Audit metadata"
+
+    indexes:
+      - type: unique
+        fields: [company_id, account_id, cost_center_id, fiscal_period_id]
+        where: "deleted_at IS NULL"
+        description: "THE CONTROL KEY: at most one live position per (company, account, cost center, fiscal period) — coverage is never ambiguous, drafts included"
+      - type: index
+        fields: [company_id, fiscal_period_id]
+        description: "The control read: positions covering one posting period"
+      - type: index
+        fields: [budget_id]
+        description: "Budget detail listing"
+
+enums:
+  - name: BudgetStatus
+    description: "Budget lifecycle"
+    variants:
+      - name: draft
+        description: "Being edited; lines mutable; NOT yet controlling any posting"
+        default: true
+      - name: confirmed
+        description: "Control active: postings consult its positions"
+      - name: closed
+        description: "Frozen; historical; no longer controlling (fiscal year ended)"
+      - name: cancelled
+        description: "Abandoned before or during control; terminal"
+
+  - name: BudgetEnforcement
+    description: "What a breach does at the posting chokepoint (owner-decided: warn by default)"
+    variants:
+      - name: warn
+        description: "Log the breach (structured warning) and let the posting through"
+        default: true
+      - name: block
+        description: "Refuse the posting (422 budget_exceeded)"

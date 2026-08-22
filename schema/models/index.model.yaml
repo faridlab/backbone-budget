@@ -1,0 +1,71 @@
+# =============================================================================
+# budget Module - Schema Index
+# =============================================================================
+# Version: 2.0
+# Description: Module schema index. `module:` and `schema:` are stamped from
+# the module name by `metaphor module create`. `schema:` gives this module its
+# OWN Postgres schema (migrations emit `CREATE SCHEMA budget` and qualify
+# tables as `budget.<table>`) — the convention every backbone module follows
+# (see backbone-sapiens, backbone-bucket). Do not remove it.
+# =============================================================================
+
+module: budget
+version: 2
+schema: budget
+
+# ADR-0014 company fence: budgets and their plan positions are
+# company-private financial plans (pillar-finance F-6). No cross-company
+# reliance/master tables — every row is fenced to its owning company.
+company_fence: strict
+description: "budget control — plan positions (account x cost center x fiscal period), achievements from GL reads, warn/block enforcement at the posting chokepoint"
+
+config:
+  database: postgresql
+  soft_delete: true
+  audit: true
+  default_timestamps: true
+  generators:
+    disabled:
+      - graphql
+      - grpc
+      - proto
+
+# Reuse sapiens for user identity (actors) — logical refs, no DB constraint.
+external_imports:
+  - module: sapiens
+    types: [User]
+
+# Shared value-object types available to all models in this module.
+shared_types:
+  Timestamps:
+    created_at:
+      type: datetime
+      attributes: ["@default(now)"]
+      description: "Record creation timestamp"
+    updated_at:
+      type: datetime
+      attributes: ["@updated_at"]
+      description: "Last update timestamp"
+    deleted_at:
+      type: datetime?
+      description: "Soft delete timestamp"
+
+  Actors:
+    created_by:
+      type: uuid?
+      attributes: ["@foreign_key(sapiens.User.id)"]
+      description: "User who created this record"
+    updated_by:
+      type: uuid?
+      attributes: ["@foreign_key(sapiens.User.id)"]
+      description: "User who last updated this record"
+    deleted_by:
+      type: uuid?
+      attributes: ["@foreign_key(sapiens.User.id)"]
+      description: "User who deleted this record"
+
+  Metadata: [Timestamps, Actors]
+
+# Import each entity model (Example skeleton removed).
+imports:
+  - budget.model.yaml

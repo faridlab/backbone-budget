@@ -1,0 +1,29 @@
+# Codegen policy for budget.
+#
+# `user_owned` globs are hand-written files that live inside generator-owned trees but are
+# NOT schema-derived. `metaphor schema generate [--force]` skips them wholesale (never reads,
+# merges, or deletes them). Everything else in src/ is regenerated from schema/models.
+#
+# Re-exports/declarations that must sit alongside generated code live inside
+# `// <<< CUSTOM ... // END CUSTOM` markers (service/mod.rs, presentation/http/mod.rs, lib.rs)
+# and are preserved by the marker mechanism, not listed here.
+#
+# Add your hand-authored services, handlers, tests, and docs below as you write them.
+
+user_owned:
+  # Hand-authored behavior (services + their HTTP surface).
+  - "src/application/service/budget_workflow_service.rs"
+  - "src/application/service/budget_control_service.rs"
+  - "src/infrastructure/persistence/budget_read_repository.rs"
+  - "src/presentation/http/budget_ops_handler.rs"
+  - "src/presentation/http/guarded_routes.rs"
+
+  # Behavior tests (the golden cases / oracle) + BDD features.
+  - "tests/features/**"
+  - "tests/budget_workflow_cases.rs"
+  - "tests/budget_achievement_cases.rs"
+  - "tests/budget_control_cases.rs"
+  - "tests/rls_probe.rs"
+
+  # Hand-authored module documentation.
+  - "docs/**"
