@@ -13,9 +13,11 @@
 //!   UI pre-check.
 //!
 //! Control semantics (module contract):
-//! - key = (company, account, cost_center, fiscal_period); EXACT matching —
-//!   a NULL cost center matches only positions whose cost center is NULL,
-//!   never an aggregate rollup (no double counting);
+//! - key = (account, cost_center, fiscal_period); EXACT matching — a NULL
+//!   cost center matches only positions whose cost center is NULL, never an
+//!   aggregate rollup (no double counting). Tenant scoping rides underneath:
+//!   the rows a read can see are whatever the composing service's fence
+//!   admits, so "the position on this key" means "in the caller's org".
 //! - only `confirmed` budgets participate — draft/closed/cancelled are inert;
 //! - achieved = net normal-direction ledger movement in the period on the key
 //!   through the posting date (debit-normal: Σdebit−Σcredit; credit-normal:
@@ -26,6 +28,13 @@
 //! - breach when achieved + pending > planned; enforcement rides the budget
 //!   header (warn default, block override).
 //!
+//! Tenancy: none, by design (ADR-0029). No scope parameter on any operation.
+//! Self-owned transactions relay the AMBIENT request org scope, when the
+//! composing service bound one (`backbone_orm::org_scope::bind_org_scope_on`),
+//! so the decorator's row-level fences govern every read. The `*_on` variants
+//! run on a caller-managed connection and inherit whatever scope THAT
+//! connection already carries — the host adapter binds its own.
+//!
 //! The GL reads are fail-closed on the accounting schema: without it the
 //! evaluation refuses instead of reporting "everything within budget".
 
@@ -34,8 +43,6 @@ use rust_decimal::Decimal;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use uuid::Uuid;
-
-use backbone_orm::company_scope;
 
 use crate::domain::entity::BudgetEnforcement;
 use crate::infrastructure::persistence::{
@@ -125,33 +132,49 @@ impl BudgetControlService {
         }
     }
 
+    /// Open a transaction carrying the AMBIENT request org scope, when the
+    /// composing service bound one — relayed verbatim so the decorator's
+    /// row-level fences evaluate for every read of the operation.
+    /// Transaction-local (`set_config(..., true)`): nothing leaks onto a
+    /// pooled connection reused by the next request. Unfenced deployments
+    /// have no ambient scope and skip this entirely.
+    async fn scoped_tx(
+        &self,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, BudgetControlError> {
+        let mut tx = self.pool.begin().await?;
+        if let Some(scope) = backbone_orm::org_scope::current_org_scope() {
+            backbone_orm::org_scope::bind_org_scope_on(&mut tx, &scope)
+                .await
+                .map_err(internal)?;
+        }
+        Ok(tx)
+    }
+
     /// Which confirmed positions would this posting exceed? Empty = within
-    /// budget or no coverage. Reads run inside one company-bound transaction
+    /// budget or no coverage. Reads run inside one scope-relayed transaction
     /// (a consistent snapshot of plan + achieved for the whole decision).
     pub async fn evaluate_posting(
         &self,
-        company_id: Uuid,
         posting_date: NaiveDate,
         lines: &[BudgetControlLine],
     ) -> Result<Vec<BudgetBreachInfo>, BudgetControlError> {
         if lines.is_empty() {
             return Ok(vec![]);
         }
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company_id).await?;
+        let mut tx = self.scoped_tx().await?;
         let breaches = self
-            .evaluate_posting_on(&mut tx, company_id, posting_date, lines)
+            .evaluate_posting_on(&mut tx, posting_date, lines)
             .await?;
         tx.commit().await?;
         Ok(breaches)
     }
 
-    /// The same evaluation on a caller-managed connection (company-bound by
-    /// the caller) — the seam adapter may reuse its own transaction.
+    /// The same evaluation on a caller-managed connection — the seam adapter
+    /// may reuse its own transaction; the caller's connection-bound scope (if
+    /// any) governs what these reads can see.
     pub async fn evaluate_posting_on(
         &self,
         conn: &mut sqlx::PgConnection,
-        company_id: Uuid,
         posting_date: NaiveDate,
         lines: &[BudgetControlLine],
     ) -> Result<Vec<BudgetBreachInfo>, BudgetControlError> {
@@ -162,7 +185,7 @@ impl BudgetControlService {
         //    itself stamps no period on such posts).
         let Some(period) = self
             .repo
-            .period_covering(conn, company_id, posting_date)
+            .period_covering(conn, posting_date)
             .await
             .map_err(internal)?
         else {
@@ -179,7 +202,7 @@ impl BudgetControlService {
         };
         let orientations: HashMap<Uuid, String> = self
             .repo
-            .normal_balances(conn, company_id, &account_ids)
+            .normal_balances(conn, &account_ids)
             .await
             .map_err(internal)?
             .into_iter()
@@ -205,14 +228,14 @@ impl BudgetControlService {
         //    the committed movement on the same keys through the posting date.
         let positions = self
             .repo
-            .confirmed_positions_on_keys(conn, company_id, &account_ids, period.id)
+            .confirmed_positions_on_keys(conn, &account_ids, period.id)
             .await
             .map_err(internal)?;
         let accounts_for_read: Vec<Uuid> =
             positions.iter().map(|p| p.account_id).collect();
         let achieved = self
             .repo
-            .achieved_on_keys(conn, company_id, &accounts_for_read, period.id, posting_date)
+            .achieved_on_keys(conn, &accounts_for_read, period.id, posting_date)
             .await
             .map_err(internal)?;
         let achieved_map: HashMap<(Uuid, Option<Uuid>), Decimal> = achieved
@@ -258,15 +281,11 @@ impl BudgetControlService {
     /// date at call time — pass an explicit date for reproducible reports).
     pub async fn achievement(
         &self,
-        company_id: Uuid,
         budget_id: Uuid,
         through: NaiveDate,
     ) -> Result<Vec<AchievementRow>, BudgetControlError> {
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company_id).await?;
-        let rows = self
-            .achievement_on(&mut tx, company_id, budget_id, through)
-            .await?;
+        let mut tx = self.scoped_tx().await?;
+        let rows = self.achievement_on(&mut tx, budget_id, through).await?;
         tx.commit().await?;
         Ok(rows)
     }
@@ -274,14 +293,13 @@ impl BudgetControlService {
     async fn achievement_on(
         &self,
         conn: &mut sqlx::PgConnection,
-        company_id: Uuid,
         budget_id: Uuid,
         through: NaiveDate,
     ) -> Result<Vec<AchievementRow>, BudgetControlError> {
         BudgetReadRepository::require_gl(conn).await.map_err(internal)?;
         let budget = self
             .repo
-            .get_budget(conn, company_id, budget_id)
+            .get_budget(conn, budget_id)
             .await
             .map_err(internal)?
             .ok_or(BudgetControlError::Internal(format!(
@@ -290,7 +308,7 @@ impl BudgetControlService {
         let _ = budget; // anchor exists; rows below carry the plan truth
         let lines = self
             .repo
-            .budget_lines(conn, company_id, budget_id)
+            .budget_lines(conn, budget_id)
             .await
             .map_err(internal)?;
 
@@ -298,7 +316,7 @@ impl BudgetControlService {
         let period_ids: Vec<Uuid> = lines.iter().map(|l| l.fiscal_period_id).collect();
         let achieved = self
             .repo
-            .achieved_per_period(conn, company_id, &account_ids, &period_ids, through)
+            .achieved_per_period(conn, &account_ids, &period_ids, through)
             .await
             .map_err(internal)?;
         let achieved_map: HashMap<(Uuid, Option<Uuid>, Uuid), Decimal> = achieved
@@ -340,17 +358,15 @@ impl BudgetControlService {
     /// The UI pre-check — control itself only consults confirmed budgets.
     pub async fn coverage(
         &self,
-        company_id: Uuid,
         account_id: Uuid,
         cost_center_id: Option<Uuid>,
         fiscal_period_id: Uuid,
     ) -> Result<Option<ControlPosition>, BudgetControlError> {
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company_id).await?;
+        let mut tx = self.scoped_tx().await?;
         BudgetReadRepository::require_gl(&mut tx).await.map_err(internal)?;
         let covered = self
             .repo
-            .coverage(&mut tx, company_id, account_id, cost_center_id, fiscal_period_id)
+            .coverage(&mut tx, account_id, cost_center_id, fiscal_period_id)
             .await
             .map_err(internal)?;
         tx.commit().await?;

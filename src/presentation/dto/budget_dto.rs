@@ -34,9 +34,6 @@ use crate::domain::entity::BudgetStatus;
 #[cfg_attr(feature = "validation", derive(Validate))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateBudgetDto {
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    #[serde(alias = "company_id")]
-    pub company_id: Uuid,
     #[cfg_attr(feature = "validation", validate(length(max = 30)))]
     #[cfg_attr(feature = "openapi", schema(example = "example"))]
     pub code: String,
@@ -73,9 +70,6 @@ pub struct CreateBudgetDto {
 #[cfg_attr(feature = "validation", derive(Validate))]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateBudgetDto {
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    #[serde(alias = "company_id")]
-    pub company_id: Uuid,
     #[cfg_attr(feature = "validation", validate(length(max = 30)))]
     #[cfg_attr(feature = "openapi", schema(example = "example"))]
     pub code: String,
@@ -112,9 +106,6 @@ pub struct UpdateBudgetDto {
 #[cfg_attr(feature = "validation", derive(Validate))]
 #[serde(rename_all = "camelCase")]
 pub struct PatchBudgetDto {
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    #[serde(skip_serializing_if = "Option::is_none", alias = "company_id")]
-    pub company_id: Option<Uuid>,
     #[cfg_attr(feature = "validation", validate(length(max = 30)))]
     #[cfg_attr(feature = "openapi", schema(example = "example"))]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -145,7 +136,7 @@ pub struct PatchBudgetDto {
 impl PatchBudgetDto {
     /// Check if any field is set
     pub fn has_changes(&self) -> bool {
-        self.company_id.is_some() || self.code.is_some() || self.name.is_some() || self.description.is_some() || self.fiscal_year.is_some() || self.date_from.is_some() || self.date_to.is_some() || self.status.is_some() || self.enforcement.is_some()
+        self.code.is_some() || self.name.is_some() || self.description.is_some() || self.fiscal_year.is_some() || self.date_from.is_some() || self.date_to.is_some() || self.status.is_some() || self.enforcement.is_some()
     }
 }
 
@@ -163,8 +154,6 @@ impl PatchBudgetDto {
 pub struct BudgetResponseDto {
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     pub id: Uuid,
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    pub company_id: Uuid,
     #[cfg_attr(feature = "openapi", schema(example = "example"))]
     pub code: String,
     #[cfg_attr(feature = "openapi", schema(example = "example"))]
@@ -235,9 +224,9 @@ impl BudgetListResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct BudgetSummaryDto {
     pub id: Uuid,
-    pub company_id: Uuid,
     pub code: String,
     pub name: String,
+    pub description: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
 }
 
@@ -249,7 +238,6 @@ impl From<Budget> for BudgetResponseDto {
     fn from(entity: Budget) -> Self {
         Self {
             id: entity.id,
-            company_id: entity.company_id,
             code: entity.code,
             name: entity.name,
             description: entity.description,
@@ -268,9 +256,9 @@ impl From<Budget> for BudgetSummaryDto {
         let created_at = backbone_core::PersistentEntity::created_at(&entity);
         Self {
             id: entity.id,
-            company_id: entity.company_id,
             code: entity.code,
             name: entity.name,
+            description: entity.description,
             created_at,
         }
     }
@@ -280,7 +268,6 @@ impl From<CreateBudgetDto> for Budget {
     fn from(dto: CreateBudgetDto) -> Self {
         Self {
             id: Uuid::new_v4(),
-            company_id: dto.company_id,
             code: dto.code,
             name: dto.name,
             description: dto.description,
@@ -298,7 +285,6 @@ impl From<&Budget> for BudgetResponseDto {
     fn from(entity: &Budget) -> Self {
         Self {
             id: entity.id.clone(),
-            company_id: entity.company_id.clone(),
             code: entity.code.clone(),
             name: entity.name.clone(),
             description: entity.description.clone(),
@@ -320,7 +306,6 @@ impl backbone_core::FromCreateDto<CreateBudgetDto> for Budget {
 
 impl backbone_core::ApplyUpdateDto<UpdateBudgetDto> for Budget {
     fn apply_update(mut self, dto: UpdateBudgetDto) -> backbone_core::ServiceResult<Self> {
-        self.company_id = dto.company_id;
         self.code = dto.code;
         self.name = dto.name;
         self.description = dto.description;

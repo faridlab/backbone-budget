@@ -1,10 +1,16 @@
-//! Budget achievement cases (B2) — plan vs achieved per line, where achieved
+//! Budget achievement cases — plan vs achieved per line, where achieved
 //! is the committed normal-direction ledger movement on the exact control key.
 //!
 //! Ledger rows are seeded directly (the GL is another module's writer; these
 //! tests verify the budget module's reads, not posting). Orientation comes
 //! from the ledger row's own `normal_balance` stamp, exactly as the control
 //! read resolves it.
+//!
+//! The module is tenant-free (ADR-0029): no test passes a tenant key. The
+//! accounting seeds keep a throwaway owner id because accounting is a
+//! separate, still company-scoped module. Budget codes are suffixed per run —
+//! the module-wide live-code rule would otherwise collide with rows a
+//! previous run left on the shared database.
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -24,6 +30,12 @@ fn db_url() -> String {
 
 async fn pool() -> PgPool {
     PgPool::connect(&db_url()).await.unwrap()
+}
+
+/// A code unique to this run — the module-wide live-code rule makes reuse
+/// across runs refuse.
+fn unique_code(prefix: &str) -> String {
+    format!("{prefix}-{}", &Uuid::new_v4().simple().to_string()[..8])
 }
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
@@ -188,7 +200,6 @@ async fn confirmed_budget(pool: &PgPool, fx: &Fx, code: &str, lines: Vec<NewBudg
     let svc = BudgetWorkflowService::new(pool.clone());
     let budget = svc
         .create_budget(
-            fx.company,
             NewBudget {
                 code: code.into(),
                 name: code.into(),
@@ -203,7 +214,7 @@ async fn confirmed_budget(pool: &PgPool, fx: &Fx, code: &str, lines: Vec<NewBudg
         )
         .await
         .unwrap();
-    svc.confirm(fx.company, budget.id, None).await.unwrap();
+    svc.confirm(budget.id, None).await.unwrap();
     budget.id
 }
 
@@ -220,7 +231,7 @@ async fn debit_normal_achievement_sums_net_movement() {
     let budget = confirmed_budget(
         &pool,
         &fx,
-        "ACH-1",
+        &unique_code("ACH"),
         vec![NewBudgetLine {
             account_id: fx.expense,
             cost_center_id: None,
@@ -236,7 +247,7 @@ async fn debit_normal_achievement_sums_net_movement() {
     seed_ledger(&pool, fx.company, fx.expense, "5000", "expense", "debit", "2026-01-20".parse().unwrap(), fx.jan, d(0), d(100), None).await;
 
     let rows = BudgetControlService::new(pool.clone())
-        .achievement(fx.company, budget, "2026-01-31".parse().unwrap())
+        .achievement(budget, "2026-01-31".parse().unwrap())
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -254,7 +265,7 @@ async fn through_date_bounds_the_window() {
     let budget = confirmed_budget(
         &pool,
         &fx,
-        "ACH-2",
+        &unique_code("ACH"),
         vec![NewBudgetLine {
             account_id: fx.expense,
             cost_center_id: None,
@@ -272,10 +283,10 @@ async fn through_date_bounds_the_window() {
 
     let ctrl = BudgetControlService::new(pool.clone());
     let through_jan_20: NaiveDate = "2026-01-20".parse().unwrap();
-    let rows = ctrl.achievement(fx.company, budget, through_jan_20).await.unwrap();
+    let rows = ctrl.achievement(budget, through_jan_20).await.unwrap();
     assert_eq!(rows[0].achieved_amount, d(100)); // the 25th is beyond the window
     let through_end: NaiveDate = "2026-01-31".parse().unwrap();
-    let rows = ctrl.achievement(fx.company, budget, through_end).await.unwrap();
+    let rows = ctrl.achievement(budget, through_end).await.unwrap();
     assert_eq!(rows[0].achieved_amount, d(150));
 }
 
@@ -286,7 +297,7 @@ async fn credit_normal_orients_by_the_row_stamp() {
     let budget = confirmed_budget(
         &pool,
         &fx,
-        "ACH-3",
+        &unique_code("ACH"),
         vec![NewBudgetLine {
             account_id: fx.revenue,
             cost_center_id: None,
@@ -301,7 +312,7 @@ async fn credit_normal_orients_by_the_row_stamp() {
     seed_ledger(&pool, fx.company, fx.revenue, "4000", "revenue", "credit", "2026-01-06".parse().unwrap(), fx.jan, d(200), d(0), None).await;
 
     let rows = BudgetControlService::new(pool.clone())
-        .achievement(fx.company, budget, "2026-01-31".parse().unwrap())
+        .achievement(budget, "2026-01-31".parse().unwrap())
         .await
         .unwrap();
     assert_eq!(rows[0].achieved_amount, d(300)); // 500 − 200
@@ -314,7 +325,7 @@ async fn keys_match_exactly_including_null_cost_center() {
     let budget = confirmed_budget(
         &pool,
         &fx,
-        "ACH-4",
+        &unique_code("ACH"),
         vec![
             NewBudgetLine {
                 account_id: fx.expense,
@@ -343,7 +354,7 @@ async fn keys_match_exactly_including_null_cost_center() {
     seed_ledger(&pool, fx.company, fx.expense, "5000", "expense", "debit", "2026-01-07".parse().unwrap(), fx.jan, d(40), d(0), Some(foreign)).await;
 
     let rows = BudgetControlService::new(pool.clone())
-        .achievement(fx.company, budget, "2026-01-31".parse().unwrap())
+        .achievement(budget, "2026-01-31".parse().unwrap())
         .await
         .unwrap();
     assert_eq!(rows.len(), 2);
@@ -363,7 +374,7 @@ async fn budget_without_movements_reads_zero() {
     let budget = confirmed_budget(
         &pool,
         &fx,
-        "ACH-5",
+        &unique_code("ACH"),
         vec![NewBudgetLine {
             account_id: fx.expense,
             cost_center_id: None,
@@ -375,7 +386,7 @@ async fn budget_without_movements_reads_zero() {
     .await;
 
     let rows = BudgetControlService::new(pool.clone())
-        .achievement(fx.company, budget, "2026-02-28".parse().unwrap())
+        .achievement(budget, "2026-02-28".parse().unwrap())
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);

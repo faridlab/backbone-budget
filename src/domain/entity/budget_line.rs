@@ -50,7 +50,6 @@ impl std::ops::Deref for BudgetLineId {
 pub struct BudgetLine {
     pub id: Uuid,
     pub budget_id: Uuid,
-    pub company_id: Uuid,
     pub account_id: Uuid,
     pub cost_center_id: Option<Uuid>,
     pub fiscal_period_id: Uuid,
@@ -70,11 +69,10 @@ impl BudgetLine {
     }
 
     /// Create a new BudgetLine with required fields
-    pub fn new(budget_id: Uuid, company_id: Uuid, account_id: Uuid, fiscal_period_id: Uuid, fiscal_year: i32, planned_amount: Decimal) -> Self {
+    pub fn new(budget_id: Uuid, account_id: Uuid, fiscal_period_id: Uuid, fiscal_year: i32, planned_amount: Decimal) -> Self {
         Self {
             id: Uuid::new_v4(),
             budget_id,
-            company_id,
             account_id,
             cost_center_id: None,
             fiscal_period_id,
@@ -170,9 +168,6 @@ impl BudgetLine {
                 "budget_id" => {
                     if let Ok(v) = serde_json::from_value(value) { self.budget_id = v; }
                 }
-                "company_id" => {
-                    if let Ok(v) = serde_json::from_value(value) { self.company_id = v; }
-                }
                 "account_id" => {
                     if let Ok(v) = serde_json::from_value(value) { self.account_id = v; }
                 }
@@ -249,7 +244,6 @@ impl backbone_orm::EntityRepoMeta for BudgetLine {
         let mut m = std::collections::HashMap::new();
         m.insert("id".to_string(), "uuid".to_string());
         m.insert("budget_id".to_string(), "uuid".to_string());
-        m.insert("company_id".to_string(), "uuid".to_string());
         m.insert("account_id".to_string(), "uuid".to_string());
         m.insert("cost_center_id".to_string(), "uuid".to_string());
         m.insert("fiscal_period_id".to_string(), "uuid".to_string());
@@ -257,9 +251,6 @@ impl backbone_orm::EntityRepoMeta for BudgetLine {
     }
     fn search_fields() -> &'static [&'static str] {
         &[]
-    }
-    fn company_field() -> Option<&'static str> {
-        Some("company_id")
     }
 }
 
@@ -270,7 +261,6 @@ impl backbone_orm::EntityRepoMeta for BudgetLine {
 #[derive(Debug, Clone, Default)]
 pub struct BudgetLineBuilder {
     budget_id: Option<Uuid>,
-    company_id: Option<Uuid>,
     account_id: Option<Uuid>,
     cost_center_id: Option<Uuid>,
     fiscal_period_id: Option<Uuid>,
@@ -284,12 +274,6 @@ impl BudgetLineBuilder {
     /// Set the budget_id field (required)
     pub fn budget_id(mut self, value: Uuid) -> Self {
         self.budget_id = Some(value);
-        self
-    }
-
-    /// Set the company_id field (required)
-    pub fn company_id(mut self, value: Uuid) -> Self {
-        self.company_id = Some(value);
         self
     }
 
@@ -340,7 +324,6 @@ impl BudgetLineBuilder {
     /// Returns Err if any required field without a default is missing.
     pub fn build(self) -> Result<BudgetLine, String> {
         let budget_id = self.budget_id.ok_or_else(|| "budget_id is required".to_string())?;
-        let company_id = self.company_id.ok_or_else(|| "company_id is required".to_string())?;
         let account_id = self.account_id.ok_or_else(|| "account_id is required".to_string())?;
         let fiscal_period_id = self.fiscal_period_id.ok_or_else(|| "fiscal_period_id is required".to_string())?;
         let fiscal_year = self.fiscal_year.ok_or_else(|| "fiscal_year is required".to_string())?;
@@ -349,7 +332,6 @@ impl BudgetLineBuilder {
         Ok(BudgetLine {
             id: Uuid::new_v4(),
             budget_id,
-            company_id,
             account_id,
             cost_center_id: self.cost_center_id,
             fiscal_period_id,

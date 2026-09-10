@@ -8,16 +8,17 @@
 //!
 //! - **Reads**: the generated GET-only routers for budgets and budget lines.
 //! - **Writes**: every mutation flows through [`BudgetWorkflowService`] verbs
-//!   (draft-only line edits, CAS confirm/close/cancel, the BG1–BG8 guard
+//!   (draft-only line edits, CAS confirm/close/cancel, the BG1–BG7 guard
 //!   matrix) — never generic CRUD.
 //! - **Control reads**: achievement + coverage projections from
 //!   [`BudgetControlService`].
 //!
-//! The tenant comes from the [`CompanyContext`] the host's `company_auth`
-//! middleware inserts — never from the body. Mount this behind the
-//! authenticated tree; the read routers ride the DB fence (strict RLS +
-//! request-scoped `app.company_id` binding), and every verb's SQL carries its
-//! own company predicate besides.
+//! Tenancy: none, by design (ADR-0029). The acting principal comes from the
+//! [`backbone_auth::org::OrgContext`] the composing service's org auth
+//! middleware inserts (route gating + actor stamping only — never a query
+//! predicate), and the services relay the ambient request org scope onto
+//! their transactions so the composing decorator's row-level fences govern
+//! every statement. Unfenced deployments get an unfenced module.
 //!
 //! Route map (relative to the mount point):
 //!
@@ -54,7 +55,8 @@ use super::{create_budget_line_read_routes, create_budget_read_routes};
 
 /// Build the guarded budget router: validated verbs + control reads + safe
 /// GETs, NO generic budget/budget-line mutation. Mount under the host's
-/// authenticated (`company_auth`) tree.
+/// org-authenticated tree (the middleware that inserts the request
+/// `OrgContext`).
 pub fn create_guarded_budget_routes(m: &BudgetModule) -> Router {
     let workflow = m.budget_workflow_service.clone();
     let control = m.budget_control_service.clone();

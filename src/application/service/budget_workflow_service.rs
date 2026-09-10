@@ -3,9 +3,16 @@
 //!
 //! Mirrors the family shape (expenses / attendance): a concrete service, an
 //! error enum carrying `code()`/`http_status()`, transaction-per-verb with
-//! `company_scope::bind_company_on`, and row-truth state guards — every verb
-//! is a compare-and-set on the row's own `status`, so a raced verb matches
-//! zero rows and surfaces as 409, never a corrupt state.
+//! row-truth state guards — every verb is a compare-and-set on the row's own
+//! `status`, so a raced verb matches zero rows and surfaces as 409, never a
+//! corrupt state.
+//!
+//! Tenancy: none, by design (ADR-0029). The module is tenant-agnostic — no
+//! tenant key on any write, no scope parameter on any verb. Every transaction
+//! relays the AMBIENT request org scope, when the composing service bound one
+//! (`backbone_orm::org_scope::bind_org_scope_on`): the decorator-installed
+//! row-level fences govern which rows a verb can see and write. A deployment
+//! that runs unfenced gets an unfenced module.
 //!
 //! Lifecycle: draft → confirmed (control active) → closed (frozen) |
 //! cancelled. Line edits are DRAFT-ONLY; a confirmed budget changes by
@@ -14,8 +21,9 @@
 //!
 //! Guard matrix (typed refusals; the DB backstops what raw writers could do):
 //! - BG1 budget_coverage_conflict 422 — another live line already holds the
-//!   control key (company, account, cost_center, fiscal_period). The partial
-//!   unique index is the backstop.
+//!   control key (account, cost_center, fiscal_period). Checked here per
+//!   verb; under a decorated deployment the decorator's org-scoped partial
+//!   unique is the raced-insert backstop (23505).
 //! - BG2 budget_no_lines 422 — confirm requires ≥ 1 line.
 //! - BG3 budget_invalid_amount 422 — planned_amount strictly > 0 (the DB
 //!   CHECK >= 0 is the raw-writer backstop).
@@ -23,18 +31,17 @@
 //!   is a detail account, active. Cross-schema; accounting schema absent ⇒
 //!   fail-closed (accounting_unwired).
 //! - BG5 budget_cost_center_invalid 422 — cost center exists, leaf, active.
-//! - BG6 budget_period_invalid 422 — fiscal period exists, same company,
-//!   fiscal year matches the header, period dates inside the header range.
+//! - BG6 budget_period_invalid 422 — fiscal period exists, fiscal year
+//!   matches the header, period dates inside the header range.
 //! - BG7 budget_invalid_transition 409 — CAS on confirm/close/cancel.
-//! - BG8 budget_line_company_mismatch 422 — a line's company must equal its
-//!   budget's (the write path mints it; the guard exists for line-add calls).
+//! - code uniqueness — one live budget per code per org unit. Checked here
+//!   per verb; the decorator's org-scoped partial unique is the raced-insert
+//!   backstop (23505 → budget_code_taken).
 
 use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
-
-use backbone_orm::company_scope;
 
 use crate::domain::entity::{Budget, BudgetEnforcement, BudgetLine, BudgetStatus};
 use crate::infrastructure::persistence::BudgetReadRepository;
@@ -61,15 +68,13 @@ pub enum BudgetWorkflowError {
     AccountMissing(Uuid),
     #[error("cost center is missing, a group, or inactive")]
     CostCenterInvalid(Uuid),
-    #[error("fiscal period is missing, belongs to another company, or does not fit the budget's year and date range")]
+    #[error("fiscal period is missing or does not fit the budget's year and date range")]
     PeriodInvalid(Uuid),
-    #[error("budget line company must equal the owning budget's company")]
-    LineCompanyMismatch,
     #[error("date_from must be on or before date_to")]
     BadDateRange,
     #[error("enforcement is fixed once a budget is closed or cancelled")]
     EnforcementLocked,
-    #[error("budget code is already taken by a live budget in this company")]
+    #[error("budget code is already taken by a live budget in this org unit")]
     CodeTaken,
     #[error("the accounting schema is unwired — budget validation needs the chart of accounts and fiscal periods")]
     AccountingUnwired,
@@ -92,7 +97,6 @@ impl BudgetWorkflowError {
             Self::AccountMissing(_) => "budget_account_missing",
             Self::CostCenterInvalid(_) => "budget_cost_center_invalid",
             Self::PeriodInvalid(_) => "budget_period_invalid",
-            Self::LineCompanyMismatch => "budget_line_company_mismatch",
             Self::BadDateRange => "budget_bad_date_range",
             Self::EnforcementLocked => "budget_enforcement_locked",
             Self::CodeTaken => "budget_code_taken",
@@ -118,8 +122,9 @@ fn internal(e: sqlx::Error) -> BudgetWorkflowError {
         return BudgetWorkflowError::AccountingUnwired;
     }
     if let sqlx::Error::Database(db) = &e {
-        // The partial unique indexes speak last: a raced key insert or code
-        // insert surfaces as 23505, mapped to the typed guard codes.
+        // Under a decorated deployment the decorator's org-scoped partial
+        // uniques speak last: a raced key or code insert surfaces as 23505,
+        // mapped to the typed guard codes.
         if db.code().as_deref() == Some("23505") {
             let msg = db.message();
             if msg.contains("budget_lines") {
@@ -184,15 +189,30 @@ impl BudgetWorkflowService {
         }
     }
 
-    // ── master-data guards (BG3–BG6, BG8) ─────────────────────────────────
+    /// Open a transaction carrying the AMBIENT request org scope, when the
+    /// composing service bound one — relayed verbatim so the decorator's
+    /// row-level fences evaluate for every statement of the verb. Transaction-
+    /// local (`set_config(..., true)`): nothing leaks onto a pooled
+    /// connection reused by the next request. Unfenced deployments have no
+    /// ambient scope and skip this entirely.
+    async fn scoped_tx(&self) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, BudgetWorkflowError> {
+        let mut tx = self.pool.begin().await?;
+        if let Some(scope) = backbone_orm::org_scope::current_org_scope() {
+            backbone_orm::org_scope::bind_org_scope_on(&mut tx, &scope)
+                .await
+                .map_err(internal)?;
+        }
+        Ok(tx)
+    }
+
+    // ── master-data guards (BG3–BG6) ──────────────────────────────────────
 
     /// Validate one prospective line against the GL masters and the header.
-    /// Runs on the caller's company-bound transaction so the whole verb sees
-    /// one consistent snapshot.
+    /// Runs on the verb's transaction so the whole verb sees one consistent
+    /// snapshot.
     async fn validate_line(
         &self,
         conn: &mut sqlx::PgConnection,
-        company: Uuid,
         header: &Budget,
         line: &NewBudgetLine,
     ) -> Result<(), BudgetWorkflowError> {
@@ -201,20 +221,20 @@ impl BudgetWorkflowService {
         }
         if !self
             .reads
-            .account_postable(conn, company, line.account_id)
+            .account_postable(conn, line.account_id)
             .await
             .map_err(internal)?
         {
             return Err(BudgetWorkflowError::AccountMissing(line.account_id)); // BG4
         }
         if let Some(cc) = line.cost_center_id {
-            if !self.reads.cost_center_usable(conn, company, cc).await.map_err(internal)? {
+            if !self.reads.cost_center_usable(conn, cc).await.map_err(internal)? {
                 return Err(BudgetWorkflowError::CostCenterInvalid(cc)); // BG5
             }
         }
         let Some(period) = self
             .reads
-            .find_period(conn, company, line.fiscal_period_id)
+            .find_period(conn, line.fiscal_period_id)
             .await
             .map_err(internal)?
         else {
@@ -233,7 +253,6 @@ impl BudgetWorkflowService {
     async fn key_taken(
         &self,
         conn: &mut sqlx::PgConnection,
-        company: Uuid,
         account_id: Uuid,
         cost_center_id: Option<Uuid>,
         fiscal_period_id: Uuid,
@@ -241,15 +260,13 @@ impl BudgetWorkflowService {
     ) -> Result<bool, BudgetWorkflowError> {
         let hit: Option<i32> = sqlx::query_scalar(
             r#"SELECT 1 FROM budget.budget_lines
-               WHERE company_id = $1
-                 AND account_id = $2
-                 AND cost_center_id IS NOT DISTINCT FROM $3
-                 AND fiscal_period_id = $4
-                 AND budget_id <> $5
+               WHERE account_id = $1
+                 AND cost_center_id IS NOT DISTINCT FROM $2
+                 AND fiscal_period_id = $3
+                 AND budget_id <> $4
                  AND (metadata->>'deleted_at') IS NULL
                LIMIT 1"#,
         )
-        .bind(company)
         .bind(account_id)
         .bind(cost_center_id)
         .bind(fiscal_period_id)
@@ -260,12 +277,34 @@ impl BudgetWorkflowService {
         Ok(hit.is_some())
     }
 
+    /// Does another live budget already carry this code? The per-unit code
+    /// unique is the composing decorator's posture; this pre-check keeps the
+    /// typed guard deterministic on unfenced databases too.
+    async fn code_taken(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        code: &str,
+        own_budget_id: Uuid,
+    ) -> Result<bool, BudgetWorkflowError> {
+        let hit: Option<i32> = sqlx::query_scalar(
+            r#"SELECT 1 FROM budget.budgets
+               WHERE code = $1
+                 AND id <> $2
+                 AND (metadata->>'deleted_at') IS NULL
+               LIMIT 1"#,
+        )
+        .bind(code)
+        .bind(own_budget_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(internal)?;
+        Ok(hit.is_some())
+    }
+
     /// Insert a line (minting `fiscal_year`/`fiscal_month` from the period).
-    #[allow(clippy::too_many_arguments)]
     async fn insert_line(
         &self,
         conn: &mut sqlx::PgConnection,
-        company: Uuid,
         budget_id: Uuid,
         period_id: Uuid,
         line: &NewBudgetLine,
@@ -274,23 +313,22 @@ impl BudgetWorkflowService {
     ) -> Result<BudgetLine, BudgetWorkflowError> {
         let period = self
             .reads
-            .find_period(conn, company, period_id)
+            .find_period(conn, period_id)
             .await
             .map_err(internal)?
             .ok_or(BudgetWorkflowError::PeriodInvalid(period_id))?;
         let id = Uuid::new_v4();
         let row = sqlx::query_as::<_, BudgetLine>(
             r#"INSERT INTO budget.budget_lines
-                   (id, budget_id, company_id, account_id, cost_center_id,
+                   (id, budget_id, account_id, cost_center_id,
                     fiscal_period_id, fiscal_year, fiscal_month, planned_amount, notes, metadata)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                       jsonb_build_object('created_by', to_jsonb($11::uuid),
-                                          'created_at', to_jsonb($12::timestamptz)))
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
+                       jsonb_build_object('created_by', to_jsonb($10::uuid),
+                                          'created_at', to_jsonb($11::timestamptz)))
                RETURNING *"#,
         )
         .bind(id)
         .bind(budget_id)
-        .bind(company)
         .bind(line.account_id)
         .bind(line.cost_center_id)
         .bind(line.fiscal_period_id)
@@ -308,15 +346,13 @@ impl BudgetWorkflowService {
 
     async fn get_budget_row(
         conn: &mut sqlx::PgConnection,
-        company: Uuid,
         budget_id: Uuid,
     ) -> Result<Option<Budget>, BudgetWorkflowError> {
         sqlx::query_as::<_, Budget>(
             r#"SELECT * FROM budget.budgets
-               WHERE company_id = $1 AND id = $2
+               WHERE id = $1
                  AND (metadata->>'deleted_at') IS NULL"#,
         )
-        .bind(company)
         .bind(budget_id)
         .fetch_optional(&mut *conn)
         .await
@@ -329,17 +365,15 @@ impl BudgetWorkflowService {
     /// endpoint's projection.
     pub async fn budget_detail(
         &self,
-        company: Uuid,
         budget_id: Uuid,
     ) -> Result<(Budget, Vec<BudgetLine>), BudgetWorkflowError> {
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
         let lines = self
             .reads
-            .budget_lines(&mut tx, company, budget_id)
+            .budget_lines(&mut tx, budget_id)
             .await?;
         tx.commit().await?;
         Ok((budget, lines))
@@ -348,11 +382,9 @@ impl BudgetWorkflowService {
     // ── create ─────────────────────────────────────────────────────────────
 
     /// Create a draft budget with its lines inline. Every line is validated
-    /// (BG3–BG6) and key-checked (BG1); a repeated code refuses (unique
-    /// index backstop mapped to budget_code_taken).
+    /// (BG3–BG6) and key-checked (BG1); a repeated code refuses (code_taken).
     pub async fn create_budget(
         &self,
-        company: Uuid,
         input: NewBudget,
         actor: Option<Uuid>,
     ) -> Result<Budget, BudgetWorkflowError> {
@@ -360,12 +392,10 @@ impl BudgetWorkflowService {
             return Err(BudgetWorkflowError::BadDateRange);
         }
         let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
+        let mut tx = self.scoped_tx().await?;
 
         let header_draft = Budget {
             id: Uuid::new_v4(),
-            company_id: company,
             code: input.code.clone(),
             name: input.name.clone(),
             description: input.description.clone(),
@@ -377,10 +407,17 @@ impl BudgetWorkflowService {
             metadata: Default::default(),
         };
 
+        if self
+            .code_taken(&mut tx, &input.code, header_draft.id)
+            .await?
+        {
+            return Err(BudgetWorkflowError::CodeTaken);
+        }
+
         for line in &input.lines {
-            self.validate_line(&mut tx, company, &header_draft, line).await?;
+            self.validate_line(&mut tx, &header_draft, line).await?;
             if self
-                .key_taken(&mut tx, company, line.account_id, line.cost_center_id, line.fiscal_period_id, header_draft.id)
+                .key_taken(&mut tx, line.account_id, line.cost_center_id, line.fiscal_period_id, header_draft.id)
                 .await?
             {
                 return Err(BudgetWorkflowError::CoverageConflict); // BG1
@@ -389,15 +426,14 @@ impl BudgetWorkflowService {
 
         let budget = sqlx::query_as::<_, Budget>(
             r#"INSERT INTO budget.budgets
-                   (id, company_id, code, name, description, fiscal_year,
+                   (id, code, name, description, fiscal_year,
                     date_from, date_to, status, enforcement, metadata)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'draft'::budget_status,$9::budget_enforcement,
-                       jsonb_build_object('created_by', to_jsonb($10::uuid),
-                                          'created_at', to_jsonb($11::timestamptz)))
+               VALUES ($1,$2,$3,$4,$5,$6,$7,'draft'::budget_status,$8::budget_enforcement,
+                       jsonb_build_object('created_by', to_jsonb($9::uuid),
+                                          'created_at', to_jsonb($10::timestamptz)))
                RETURNING *"#,
         )
         .bind(header_draft.id)
-        .bind(company)
         .bind(&input.code)
         .bind(&input.name)
         .bind(&input.description)
@@ -412,7 +448,7 @@ impl BudgetWorkflowService {
         .map_err(internal)?;
 
         for line in &input.lines {
-            self.insert_line(&mut tx, company, budget.id, line.fiscal_period_id, line, actor, now)
+            self.insert_line(&mut tx, budget.id, line.fiscal_period_id, line, actor, now)
                 .await?;
         }
         tx.commit().await?;
@@ -425,7 +461,6 @@ impl BudgetWorkflowService {
     /// is editable while draft or confirmed and refused on closed/cancelled.
     pub async fn update_budget(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         patch: BudgetPatch,
         actor: Option<Uuid>,
@@ -435,9 +470,8 @@ impl BudgetWorkflowService {
             || patch.date_from.is_some()
             || patch.date_to.is_some();
 
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
 
@@ -454,11 +488,11 @@ impl BudgetWorkflowService {
                                    jsonb_set(metadata, '{updated_by}',
                                              COALESCE(to_jsonb($4::uuid), 'null'::jsonb)),
                                    '{updated_at}', to_jsonb($5::timestamptz))
-                           WHERE company_id = $1 AND id = $2
+                           WHERE id = $1 AND id = $2
                              AND (metadata->>'deleted_at') IS NULL
                            RETURNING *"#,
                     )
-                    .bind(company)
+                    .bind(budget_id)
                     .bind(budget_id)
                     .bind(enforcement)
                     .bind(actor)
@@ -481,20 +515,19 @@ impl BudgetWorkflowService {
 
         let updated = sqlx::query_as::<_, Budget>(
             r#"UPDATE budget.budgets
-               SET name = COALESCE($3, name),
-                   description = COALESCE($4, description),
-                   date_from = $5,
-                   date_to = $6,
+               SET name = COALESCE($2, name),
+                   description = COALESCE($3, description),
+                   date_from = $4,
+                   date_to = $5,
                    metadata = jsonb_set(
                        jsonb_set(metadata, '{updated_by}',
-                                 COALESCE(to_jsonb($7::uuid), 'null'::jsonb)),
-                       '{updated_at}', to_jsonb($8::timestamptz))
-               WHERE company_id = $1 AND id = $2
+                                 COALESCE(to_jsonb($6::uuid), 'null'::jsonb)),
+                       '{updated_at}', to_jsonb($7::timestamptz))
+               WHERE id = $1
                  AND status = 'draft'
                  AND (metadata->>'deleted_at') IS NULL
                RETURNING *"#,
         )
-        .bind(company)
         .bind(budget_id)
         .bind(patch.name.as_deref().map(|s| s.to_string()))
         .bind(patch.description.clone().flatten())
@@ -514,28 +547,26 @@ impl BudgetWorkflowService {
     /// Add one validated line to a DRAFT budget (BG1/BG3–BG6).
     pub async fn add_line(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         line: NewBudgetLine,
         actor: Option<Uuid>,
     ) -> Result<BudgetLine, BudgetWorkflowError> {
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
         if budget.status != BudgetStatus::Draft {
             return Err(BudgetWorkflowError::NotDraft);
         }
-        self.validate_line(&mut tx, company, &budget, &line).await?;
+        self.validate_line(&mut tx, &budget, &line).await?;
         if self
-            .key_taken(&mut tx, company, line.account_id, line.cost_center_id, line.fiscal_period_id, budget_id)
+            .key_taken(&mut tx, line.account_id, line.cost_center_id, line.fiscal_period_id, budget_id)
             .await?
         {
             return Err(BudgetWorkflowError::CoverageConflict);
         }
         let created = self
-            .insert_line(&mut tx, company, budget_id, line.fiscal_period_id, &line, actor, Utc::now())
+            .insert_line(&mut tx, budget_id, line.fiscal_period_id, &line, actor, Utc::now())
             .await?;
         tx.commit().await?;
         Ok(created)
@@ -546,7 +577,6 @@ impl BudgetWorkflowService {
     /// coverage; amount edits are the day-to-day knob.
     pub async fn update_line(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         line_id: Uuid,
         planned_amount: Decimal,
@@ -556,27 +586,25 @@ impl BudgetWorkflowService {
         if planned_amount <= Decimal::ZERO {
             return Err(BudgetWorkflowError::InvalidAmount);
         }
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
         if budget.status != BudgetStatus::Draft {
             return Err(BudgetWorkflowError::NotDraft);
         }
-        // BG8 belt-and-braces: the line must belong to this budget AND company.
+        // Belt-and-braces: the line must belong to this budget.
         let updated = sqlx::query_as::<_, BudgetLine>(
             r#"UPDATE budget.budget_lines
-               SET planned_amount = $4, notes = $5,
+               SET planned_amount = $3, notes = $4,
                    metadata = jsonb_set(
                        jsonb_set(metadata, '{updated_by}',
-                                 COALESCE(to_jsonb($6::uuid), 'null'::jsonb)),
-                       '{updated_at}', to_jsonb($7::timestamptz))
-               WHERE company_id = $1 AND budget_id = $2 AND id = $3
+                                 COALESCE(to_jsonb($5::uuid), 'null'::jsonb)),
+                       '{updated_at}', to_jsonb($6::timestamptz))
+               WHERE budget_id = $1 AND id = $2
                  AND (metadata->>'deleted_at') IS NULL
                RETURNING *"#,
         )
-        .bind(company)
         .bind(budget_id)
         .bind(line_id)
         .bind(planned_amount)
@@ -594,14 +622,12 @@ impl BudgetWorkflowService {
     /// Soft-delete a line (draft only).
     pub async fn delete_line(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         line_id: Uuid,
         actor: Option<Uuid>,
     ) -> Result<(), BudgetWorkflowError> {
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
         if budget.status != BudgetStatus::Draft {
@@ -611,12 +637,11 @@ impl BudgetWorkflowService {
             r#"UPDATE budget.budget_lines
                SET metadata = jsonb_set(
                        jsonb_set(metadata, '{deleted_by}',
-                                 COALESCE(to_jsonb($4::uuid), 'null'::jsonb)),
-                       '{deleted_at}', to_jsonb($5::timestamptz))
-               WHERE company_id = $1 AND budget_id = $2 AND id = $3
+                                 COALESCE(to_jsonb($3::uuid), 'null'::jsonb)),
+                       '{deleted_at}', to_jsonb($4::timestamptz))
+               WHERE budget_id = $1 AND id = $2
                  AND (metadata->>'deleted_at') IS NULL"#,
         )
-        .bind(company)
         .bind(budget_id)
         .bind(line_id)
         .bind(actor)
@@ -638,14 +663,12 @@ impl BudgetWorkflowService {
     /// The row-truth CAS makes a raced confirm match zero rows → 409.
     pub async fn confirm(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         actor: Option<Uuid>,
     ) -> Result<Budget, BudgetWorkflowError> {
         let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
         if budget.status != BudgetStatus::Draft {
@@ -654,7 +677,7 @@ impl BudgetWorkflowService {
             });
         }
 
-        let lines = self.reads.budget_lines(&mut tx, company, budget_id).await?;
+        let lines = self.reads.budget_lines(&mut tx, budget_id).await?;
         if lines.is_empty() {
             return Err(BudgetWorkflowError::NoLines); // BG2
         }
@@ -668,9 +691,9 @@ impl BudgetWorkflowService {
                 planned_amount: line.planned_amount,
                 notes: line.notes.clone(),
             };
-            self.validate_line(&mut tx, company, &budget, &candidate).await?;
+            self.validate_line(&mut tx, &budget, &candidate).await?;
             if self
-                .key_taken(&mut tx, company, line.account_id, line.cost_center_id, line.fiscal_period_id, budget_id)
+                .key_taken(&mut tx, line.account_id, line.cost_center_id, line.fiscal_period_id, budget_id)
                 .await?
             {
                 return Err(BudgetWorkflowError::CoverageConflict); // BG1
@@ -684,13 +707,13 @@ impl BudgetWorkflowService {
                        jsonb_set(metadata, '{updated_by}',
                                  COALESCE(to_jsonb($3::uuid), 'null'::jsonb)),
                        '{updated_at}', to_jsonb($4::timestamptz))
-               WHERE company_id = $1 AND id = $2
-                 AND status = 'draft'
+               WHERE id = $1
+                 AND status = $2::budget_status
                  AND (metadata->>'deleted_at') IS NULL
                RETURNING *"#,
         )
-        .bind(company)
         .bind(budget_id)
+        .bind(BudgetStatus::Draft)
         .bind(actor)
         .bind(now)
         .fetch_one(&mut *tx)
@@ -703,23 +726,20 @@ impl BudgetWorkflowService {
     /// confirmed → closed (frozen; historical).
     pub async fn close(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         actor: Option<Uuid>,
     ) -> Result<Budget, BudgetWorkflowError> {
-        self.transition(company, budget_id, &[BudgetStatus::Confirmed], "closed", actor)
+        self.transition(budget_id, &[BudgetStatus::Confirmed], "closed", actor)
             .await
     }
 
     /// draft | confirmed → cancelled.
     pub async fn cancel(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         actor: Option<Uuid>,
     ) -> Result<Budget, BudgetWorkflowError> {
         self.transition(
-            company,
             budget_id,
             &[BudgetStatus::Draft, BudgetStatus::Confirmed],
             "cancelled",
@@ -733,15 +753,13 @@ impl BudgetWorkflowService {
     /// zero rows and surfaces as 409 with the status actually observed.
     async fn transition(
         &self,
-        company: Uuid,
         budget_id: Uuid,
         allowed_from: &[BudgetStatus],
         to: &str,
         actor: Option<Uuid>,
     ) -> Result<Budget, BudgetWorkflowError> {
-        let mut tx = self.pool.begin().await?;
-        company_scope::bind_company_on(&mut tx, company).await?;
-        let budget = Self::get_budget_row(&mut tx, company, budget_id)
+        let mut tx = self.scoped_tx().await?;
+        let budget = Self::get_budget_row(&mut tx, budget_id)
             .await?
             .ok_or(BudgetWorkflowError::NotFound)?;
         if !allowed_from.contains(&budget.status) {
@@ -756,17 +774,16 @@ impl BudgetWorkflowService {
                        jsonb_set(metadata, '{{updated_by}}',
                                  COALESCE(to_jsonb($3::uuid), 'null'::jsonb)),
                        '{{updated_at}}', to_jsonb($4::timestamptz))
-               WHERE company_id = $1 AND id = $2
-                 AND status = $5::budget_status
+               WHERE id = $1
+                 AND status = $2::budget_status
                  AND (metadata->>'deleted_at') IS NULL
                RETURNING *"#,
         );
         let updated = sqlx::query_as::<_, Budget>(&sql)
-            .bind(company)
             .bind(budget_id)
+            .bind(budget.status)
             .bind(actor)
             .bind(Utc::now())
-            .bind(budget.status)
             .fetch_optional(&mut *tx)
             .await
             .map_err(internal)?

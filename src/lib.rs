@@ -132,7 +132,9 @@ impl BudgetModule {
     }
 
     /// Guarded composition: validated verbs + control reads + safe GETs, NO
-    /// generic budget/budget-line mutation. Mount behind `company_auth`.
+    /// generic budget/budget-line mutation. Mount behind the host's
+    /// org-auth middleware (it inserts the request `OrgContext` and binds the
+    /// ambient org scope the services relay).
     pub fn guarded_routes(&self) -> Router {
         presentation::http::create_guarded_budget_routes(self)
     }

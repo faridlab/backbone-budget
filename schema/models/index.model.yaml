@@ -13,10 +13,11 @@ module: budget
 version: 2
 schema: budget
 
-# ADR-0014 company fence: budgets and their plan positions are
-# company-private financial plans (pillar-finance F-6). No cross-company
-# reliance/master tables — every row is fenced to its owning company.
-company_fence: strict
+# Tenancy: none, by design (ADR-0029). The module is tenant-agnostic and reusable —
+# it ships no scoping column and no fence declaration. A composing backend-service
+# that wants these tables org-scoped declares them in its tenancy.yaml; the
+# decorator installs org_unit_id, the RLS policy, the kind guard, and per-unit
+# uniques at composition time.
 description: "budget control — plan positions (account x cost center x fiscal period), achievements from GL reads, warn/block enforcement at the posting chokepoint"
 
 config:

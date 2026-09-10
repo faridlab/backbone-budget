@@ -25,7 +25,6 @@ impl TestDataGenerator for BudgetLineTestData {
         json!({
             "id": Uuid::new_v4().to_string(),
             "budget_id": Uuid::new_v4().to_string(),
-            "company_id": Uuid::new_v4().to_string(),
             "account_id": Uuid::new_v4().to_string(),
             "cost_center_id": null,
             "fiscal_period_id": Uuid::new_v4().to_string(),
@@ -42,7 +41,6 @@ impl TestDataGenerator for BudgetLineTestData {
         json!({
             "id": id,
             "budget_id": Uuid::new_v4().to_string(),
-            "company_id": Uuid::new_v4().to_string(),
             "account_id": Uuid::new_v4().to_string(),
             "cost_center_id": null,
             "fiscal_period_id": Uuid::new_v4().to_string(),

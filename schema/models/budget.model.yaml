@@ -5,8 +5,8 @@
 #              budget source (account_budget is Enterprise), so this module
 #              owns its spec. A Budget is the header (identity, coverage,
 #              lifecycle, enforcement posture); each BudgetLine is ONE PLAN
-#              POSITION keyed (company, account, cost_center, fiscal_period) —
-#              the shared analytic dimension from the coverage map. Control
+#              POSITION keyed (account, cost_center, fiscal_period) — the
+#              shared analytic dimension from the coverage map. Control
 #              semantics: only confirmed budgets participate; achieved amounts
 #              are read from the GL (accounting.ledgers, cross-schema SQL);
 #              enforcement is warn by default with a per-budget block override
@@ -19,7 +19,7 @@
 models:
   - name: Budget
     collection: budgets
-    description: "A company budget: header lifecycle (draft → confirmed → closed/cancelled) + the warn/block enforcement posture for its positions."
+    description: "A budget: header lifecycle (draft → confirmed → closed/cancelled) + the warn/block enforcement posture for its positions."
 
     fields:
       id:
@@ -27,15 +27,10 @@ models:
         attributes: ["@id", "@default(uuid)"]
         description: "Unique record id"
 
-      company_id:
-        type: uuid
-        attributes: ["@required", "@exclude_from_foreign_key_check"]
-        description: "Org owner # logical FK organization.Company.id"
-
       code:
         type: string
         attributes: ["@required", "@max(30)"]
-        description: "Stable budget identifier (unique per company among live rows)"
+        description: "Stable budget identifier (unique per org unit among live rows; the per-unit unique is the composing service's tenancy decorator)"
 
       name:
         type: string
@@ -83,20 +78,14 @@ models:
         inverse: budget
 
     indexes:
-      - type: unique
-        fields: [company_id, code]
-        where: "deleted_at IS NULL"
-        description: "One live budget per code per company (soft-deleted codes may be reused)"
-      - type: index
-        fields: [company_id, status]
-        description: "Lifecycle queues: confirm/close/cancel worklists per company"
-      - type: index
-        fields: [company_id, fiscal_year]
-        description: "Per-year budget listing"
+      # No tenancy indexes (ADR-0029): the module is tenant-agnostic. The per-unit
+      # code unique and the lifecycle / per-year listing indexes are installed by
+      # the composing service's tenancy decorator (org_unit_id-leading), not
+      # declared here.
 
   - name: BudgetLine
     collection: budget_lines
-    description: "One budget position: a planned amount for (account, cost center, fiscal period). The control key is (company, account, cost_center, fiscal_period) — at most one live row ever, enforced unique including drafts so coverage is never ambiguous."
+    description: "One budget position: a planned amount for (account, cost center, fiscal period). The control key is (org unit, account, cost_center, fiscal_period) once the composing service's tenancy decorator scopes the table — at most one live row per key, enforced unique including drafts so coverage is never ambiguous."
 
     fields:
       id:
@@ -108,11 +97,6 @@ models:
         type: uuid
         attributes: ["@required", "@foreign_key(Budget.id)"]
         description: "Owning budget"
-
-      company_id:
-        type: uuid
-        attributes: ["@required", "@exclude_from_foreign_key_check"]
-        description: "Denormalized tenant fence — must equal the owning budget's company"
 
       account_id:
         type: uuid
@@ -155,13 +139,11 @@ models:
         description: "Audit metadata"
 
     indexes:
-      - type: unique
-        fields: [company_id, account_id, cost_center_id, fiscal_period_id]
-        where: "deleted_at IS NULL"
-        description: "THE CONTROL KEY: at most one live position per (company, account, cost center, fiscal period) — coverage is never ambiguous, drafts included"
-      - type: index
-        fields: [company_id, fiscal_period_id]
-        description: "The control read: positions covering one posting period"
+      # No tenancy indexes (ADR-0029): the module is tenant-agnostic. THE CONTROL
+      # KEY unique — one live position per (org unit, account, cost center,
+      # fiscal period) — and the per-period control read are installed by the
+      # composing service's tenancy decorator (org_unit_id-leading), not declared
+      # here. The budget listing index is domain, tenant-free, and stays.
       - type: index
         fields: [budget_id]
         description: "Budget detail listing"

@@ -25,5 +25,9 @@ user_owned:
   - "tests/budget_control_cases.rs"
   - "tests/rls_probe.rs"
 
+  # Hand-written migrations (guarded tenancy strip — ADR-0029).
+  - "migrations/20260910103000_strip_tenancy.up.sql"
+  - "migrations/20260910103000_strip_tenancy.down.sql"
+
   # Hand-authored module documentation.
   - "docs/**"

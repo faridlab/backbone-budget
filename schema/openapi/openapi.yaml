@@ -755,7 +755,6 @@ components:
       type: object
       required:
         - id
-        - company_id
         - code
         - name
         - fiscal_year
@@ -766,9 +765,6 @@ components:
         - metadata
       properties:
         id:
-          type: string
-          format: uuid
-        company_id:
           type: string
           format: uuid
         code:
@@ -815,7 +811,6 @@ components:
     CreateBudgetRequest:
       type: object
       required:
-        - company_id
         - code
         - name
         - fiscal_year
@@ -825,9 +820,6 @@ components:
         - enforcement
         - metadata
       properties:
-        company_id:
-          type: string
-          format: uuid
         code:
           type: string
           maxLength: 30
@@ -859,7 +851,6 @@ components:
     UpdateBudgetRequest:
       type: object
       required:
-        - company_id
         - code
         - name
         - fiscal_year
@@ -869,9 +860,6 @@ components:
         - enforcement
         - metadata
       properties:
-        company_id:
-          type: string
-          format: uuid
         code:
           type: string
           maxLength: 30
@@ -903,9 +891,6 @@ components:
     PatchBudgetRequest:
       type: object
       properties:
-        company_id:
-          type: string
-          format: uuid
         code:
           type: string
           maxLength: 30
@@ -949,7 +934,6 @@ components:
       required:
         - id
         - budget_id
-        - company_id
         - account_id
         - fiscal_period_id
         - fiscal_year
@@ -960,9 +944,6 @@ components:
           type: string
           format: uuid
         budget_id:
-          type: string
-          format: uuid
-        company_id:
           type: string
           format: uuid
         account_id:
@@ -1012,7 +993,6 @@ components:
       type: object
       required:
         - budget_id
-        - company_id
         - account_id
         - fiscal_period_id
         - fiscal_year
@@ -1020,9 +1000,6 @@ components:
         - metadata
       properties:
         budget_id:
-          type: string
-          format: uuid
-        company_id:
           type: string
           format: uuid
         account_id:
@@ -1059,7 +1036,6 @@ components:
       type: object
       required:
         - budget_id
-        - company_id
         - account_id
         - fiscal_period_id
         - fiscal_year
@@ -1067,9 +1043,6 @@ components:
         - metadata
       properties:
         budget_id:
-          type: string
-          format: uuid
-        company_id:
           type: string
           format: uuid
         account_id:
@@ -1106,9 +1079,6 @@ components:
       type: object
       properties:
         budget_id:
-          type: string
-          format: uuid
-        company_id:
           type: string
           format: uuid
         account_id:

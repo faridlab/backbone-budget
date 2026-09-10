@@ -18,15 +18,18 @@ it (fiscal year ended); `cancel` abandons it; both are compare-and-set.
 
 Business rules (the BG guard matrix):
 
-- one live position per control key (company, account, cost_center, fiscal_period) —
-  across all budgets, drafts included (BG1);
+- one live position per control key (account, cost_center, fiscal_period) —
+  across all budgets, drafts included (BG1); under a decorated deployment the
+  composing service's org-scoped partial unique is the raced-insert backstop;
 - confirm requires at least one line (BG2); amounts strictly > 0 (BG3);
 - account must be a live detail account (BG4); cost center a live leaf (BG5);
-- period must belong to the company and fit the header's fiscal year and date range
-  (BG6); transitions are CAS (BG7); a line's company must equal its budget's (BG8).
+- period must fit the header's fiscal year and date range (BG6); transitions
+  are CAS (BG7); one live budget per code.
 
-Failure paths: typed 4xx refusals with the codes above; the partial unique indexes
-backstop the key and code rules against raw writers.
+Failure paths: typed 4xx refusals with the codes above. The module is
+tenant-agnostic (ADR-0029): the service pre-checks the key and code rules, and
+the composing service's tenancy decorator re-installs the org-scoped partial
+uniques that backstop them against raw writers and raced inserts.
 
 Postconditions: a confirmed budget participates in posting control; a draft, closed,
 or cancelled one never does.
@@ -73,8 +76,9 @@ line is even written.
 - `tests/budget_workflow_cases.rs` — the guard matrix and lifecycle;
 - `tests/budget_achievement_cases.rs` — plan vs achieved, orientation, key matching;
 - `tests/budget_control_cases.rs` — evaluation (within / warn / block, exact keys,
-  inert statuses, cross-tenant, fail-closed without the GL);
-- `tests/rls_probe.rs` — the row-level company fence;
+  inert statuses, fail-closed without the GL);
+- `tests/rls_probe.rs` — the tenancy posture probe: no tenant column or legacy
+  company policy ships, RLS stays armed, default-deny holds from below;
 - backbone-accounting `tests/posting_budget_control_cases.rs` — the chokepoint side:
   fail-open unwired, block/warn golden, block-dominates, fail-closed broken port,
   idempotent reuse skipping the consult.

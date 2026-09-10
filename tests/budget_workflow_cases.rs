@@ -1,9 +1,9 @@
-//! Budget workflow golden cases — the validated write path (B1).
+//! Budget workflow golden cases — the validated write path.
 //!
-//! Every test mints a fresh company so parallel runs never collide; each test
-//! seeds its own chart of accounts, cost centers, and fiscal periods (the
-//! accounting masters the guards read cross-schema), then drives
-//! `BudgetWorkflowService` verbs through the guard matrix:
+//! The module is tenant-free (ADR-0029): no test passes a tenant key to any
+//! verb. Each test mints fresh accounting masters (the cross-schema data the
+//! guards read — accounting is a separate module that still scopes its own
+//! rows), then drives `BudgetWorkflowService` verbs through the guard matrix:
 //!
 //! - BG1 budget_coverage_conflict — one live line per control key, across budgets
 //! - BG2 budget_no_lines — confirm requires a plan
@@ -13,6 +13,8 @@
 //! - BG6 budget_period_invalid — period fits the header's year and range
 //! - BG7 budget_invalid_transition — CAS on confirm/close/cancel
 //! - plus: draft-only line edits, enforcement's own edit rule, code uniqueness
+//!   (service pre-check; the composing decorator's org-scoped partial uniques
+//!   are the raced-insert backstop in a decorated deployment)
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
@@ -33,7 +35,8 @@ async fn pool() -> PgPool {
     PgPool::connect(&db_url()).await.unwrap()
 }
 
-// ── accounting master fixtures ────────────────────────────────────────────────
+// ── accounting master fixtures (accounting is unstripped: its rows still
+//    carry a company_id NOT NULL column, so the seeds keep providing one) ─────
 
 async fn seed_account(
     pool: &PgPool,
@@ -113,11 +116,12 @@ async fn seed_period(
     .unwrap();
 }
 
-/// One fresh tenant: an expense account, bank account, a leaf cost center, a
-/// group cost center, an inactive cost center, and January/February 2026
-/// monthly periods.
+/// One fresh set of accounting masters (a throwaway owner id fills the
+/// accounting schema's own company column): an expense account, bank account,
+/// a leaf cost center, a group cost center, an inactive cost center, and
+/// January/February 2026 monthly periods.
 struct Fixture {
-    company: Uuid,
+    owner: Uuid,
     expense: Uuid,
     bank: Uuid,
     cc_leaf: Uuid,
@@ -129,7 +133,7 @@ struct Fixture {
 }
 
 async fn fixture(pool: &PgPool) -> Fixture {
-    let company = Uuid::new_v4();
+    let owner = Uuid::new_v4();
     let expense = Uuid::new_v4();
     let bank = Uuid::new_v4();
     let cc_leaf = Uuid::new_v4();
@@ -139,17 +143,17 @@ async fn fixture(pool: &PgPool) -> Fixture {
     let feb = Uuid::new_v4();
     let jan_2025 = Uuid::new_v4();
 
-    seed_account(pool, company, expense, "5000", "expense", "operating_expense", "debit", true, "active").await;
-    seed_account(pool, company, bank, "1100", "asset", "bank", "debit", true, "active").await;
-    seed_cost_center(pool, company, cc_leaf, "CC-1", false, true).await;
-    seed_cost_center(pool, company, cc_group, "CC-G", true, true).await;
-    seed_cost_center(pool, company, cc_inactive, "CC-X", false, false).await;
-    seed_period(pool, company, jan, "2026-01", "2026-01-01".parse().unwrap(), "2026-01-31".parse().unwrap(), 2026, 1).await;
-    seed_period(pool, company, feb, "2026-02", "2026-02-01".parse().unwrap(), "2026-02-28".parse().unwrap(), 2026, 2).await;
-    seed_period(pool, company, jan_2025, "2025-01", "2025-01-01".parse().unwrap(), "2025-01-31".parse().unwrap(), 2025, 1).await;
+    seed_account(pool, owner, expense, "5000", "expense", "operating_expense", "debit", true, "active").await;
+    seed_account(pool, owner, bank, "1100", "asset", "bank", "debit", true, "active").await;
+    seed_cost_center(pool, owner, cc_leaf, "CC-1", false, true).await;
+    seed_cost_center(pool, owner, cc_group, "CC-G", true, true).await;
+    seed_cost_center(pool, owner, cc_inactive, "CC-X", false, false).await;
+    seed_period(pool, owner, jan, "2026-01", "2026-01-01".parse().unwrap(), "2026-01-31".parse().unwrap(), 2026, 1).await;
+    seed_period(pool, owner, feb, "2026-02", "2026-02-01".parse().unwrap(), "2026-02-28".parse().unwrap(), 2026, 2).await;
+    seed_period(pool, owner, jan_2025, "2025-01", "2025-01-01".parse().unwrap(), "2025-01-31".parse().unwrap(), 2025, 1).await;
 
     Fixture {
-        company,
+        owner,
         expense,
         bank,
         cc_leaf,
@@ -171,10 +175,11 @@ fn jan_line(fx: &Fixture, account: Uuid, amount: Decimal) -> NewBudgetLine {
     }
 }
 
-fn new_budget(_fx: &Fixture, code: &str, lines: Vec<NewBudgetLine>) -> NewBudget {
+fn new_budget(code: String, lines: Vec<NewBudgetLine>) -> NewBudget {
+    let name = format!("{code} plan");
     NewBudget {
-        code: code.into(),
-        name: format!("{code} plan"),
+        code,
+        name,
         description: None,
         fiscal_year: 2026,
         date_from: "2026-01-01".parse().unwrap(),
@@ -182,6 +187,14 @@ fn new_budget(_fx: &Fixture, code: &str, lines: Vec<NewBudgetLine>) -> NewBudget
         enforcement: BudgetEnforcement::Warn,
         lines,
     }
+}
+
+/// A code unique to this run — the module-wide live-code rule makes reuse
+/// across runs refuse (under a decorated deployment the rule is per org
+/// unit; the pre-check here is deliberately unscoped, matching the module's
+/// tenant-free posture).
+fn unique_code(prefix: &str) -> String {
+    format!("{prefix}-{}", &Uuid::new_v4().simple().to_string()[..8])
 }
 
 fn code(e: &BudgetWorkflowError) -> &'static str {
@@ -198,10 +211,8 @@ async fn create_confirm_close_happy_path() {
 
     let budget = svc
         .create_budget(
-            fx.company,
             new_budget(
-                &fx,
-                "B-2026",
+                unique_code("B-2026"),
                 vec![
                     jan_line(&fx, fx.expense, Decimal::new(1000, 0)),
                     NewBudgetLine {
@@ -220,7 +231,7 @@ async fn create_confirm_close_happy_path() {
     assert_eq!(budget.status, BudgetStatus::Draft);
     assert_eq!(budget.enforcement, BudgetEnforcement::Warn);
 
-    let (header, lines) = svc.budget_detail(fx.company, budget.id).await.unwrap();
+    let (header, lines) = svc.budget_detail(budget.id).await.unwrap();
     assert_eq!(header.id, budget.id);
     assert_eq!(lines.len(), 2);
     // The line denormalizes the period's own year/month.
@@ -228,10 +239,10 @@ async fn create_confirm_close_happy_path() {
     assert_eq!(jan.fiscal_year, 2026);
     assert_eq!(jan.fiscal_month, Some(1));
 
-    let confirmed = svc.confirm(fx.company, budget.id, None).await.unwrap();
+    let confirmed = svc.confirm(budget.id, None).await.unwrap();
     assert_eq!(confirmed.status, BudgetStatus::Confirmed);
 
-    let closed = svc.close(fx.company, budget.id, None).await.unwrap();
+    let closed = svc.close(budget.id, None).await.unwrap();
     assert_eq!(closed.status, BudgetStatus::Closed);
 }
 
@@ -242,7 +253,7 @@ async fn zero_amount_line_refuses() {
     let fx = fixture(&pool).await;
     let svc = BudgetWorkflowService::new(pool.clone());
     let err = svc
-        .create_budget(fx.company, new_budget(&fx, "B-Z", vec![jan_line(&fx, fx.expense, Decimal::ZERO)]), None)
+        .create_budget(new_budget(unique_code("B-Z"), vec![jan_line(&fx, fx.expense, Decimal::ZERO)]), None)
         .await
         .unwrap_err();
     assert_eq!(code(&err), "budget_invalid_amount");
@@ -255,18 +266,18 @@ async fn non_detail_or_missing_account_refuses() {
     let pool = pool().await;
     let fx = fixture(&pool).await;
     let header_account = Uuid::new_v4();
-    seed_account(&pool, fx.company, header_account, "1000", "asset", "non_current_asset", "debit", false, "active").await;
+    seed_account(&pool, fx.owner, header_account, "1000", "asset", "non_current_asset", "debit", false, "active").await;
     let svc = BudgetWorkflowService::new(pool.clone());
 
     let unknown = svc
-        .create_budget(fx.company, new_budget(&fx, "B-U", vec![jan_line(&fx, Uuid::new_v4(), Decimal::ONE)]), None)
+        .create_budget(new_budget(unique_code("B-U"), vec![jan_line(&fx, Uuid::new_v4(), Decimal::ONE)]), None)
         .await
         .unwrap_err();
     assert_eq!(code(&unknown), "budget_account_missing");
     assert_eq!(unknown.http_status(), 422);
 
     let header = svc
-        .create_budget(fx.company, new_budget(&fx, "B-H", vec![jan_line(&fx, header_account, Decimal::ONE)]), None)
+        .create_budget(new_budget(unique_code("B-H"), vec![jan_line(&fx, header_account, Decimal::ONE)]), None)
         .await
         .unwrap_err();
     assert_eq!(code(&header), "budget_account_missing");
@@ -281,10 +292,8 @@ async fn group_or_inactive_cost_center_refuses() {
     for (cc, label) in [(fx.cc_group, "group"), (fx.cc_inactive, "inactive")] {
         let err = svc
             .create_budget(
-                fx.company,
                 new_budget(
-                    &fx,
-                    &format!("B-{label}"),
+                    unique_code(&format!("B-{label}")),
                     vec![NewBudgetLine {
                         account_id: fx.expense,
                         cost_center_id: Some(cc),
@@ -312,10 +321,8 @@ async fn period_outside_header_year_or_range_refuses() {
     // A 2025 period can never fit a 2026 budget.
     let wrong_year = svc
         .create_budget(
-            fx.company,
             new_budget(
-                &fx,
-                "B-Y",
+                unique_code("B-Y"),
                 vec![NewBudgetLine {
                     account_id: fx.expense,
                     cost_center_id: None,
@@ -336,22 +343,24 @@ async fn period_outside_header_year_or_range_refuses() {
     }
 
     // Header range narrower than the period: date_to before the period's end.
-    let mut input = new_budget(&fx, "B-R", vec![jan_line(&fx, fx.expense, Decimal::ONE)]);
+    let mut input = new_budget(unique_code("B-R"), vec![jan_line(&fx, fx.expense, Decimal::ONE)]);
     input.date_to = "2026-01-15".parse().unwrap();
-    let err = svc.create_budget(fx.company, input, None).await.unwrap_err();
+    let err = svc.create_budget(input, None).await.unwrap_err();
     assert_eq!(code(&err), "budget_period_invalid");
 }
 
 #[tokio::test]
 async fn duplicate_control_key_refuses_across_budgets() {
-    // BG1 — one live line per key, whatever the budget
+    // BG1 — one live line per key, whatever the budget. On this bare,
+    // undecorated database the service's per-verb pre-check is the guard;
+    // under a decorated deployment the decorator's org-scoped partial unique
+    // backstops a raced insert with 23505.
     let pool = pool().await;
     let fx = fixture(&pool).await;
     let svc = BudgetWorkflowService::new(pool.clone());
 
     svc.create_budget(
-        fx.company,
-        new_budget(&fx, "B-1", vec![jan_line(&fx, fx.expense, Decimal::new(100, 0))]),
+        new_budget(unique_code("B-1"), vec![jan_line(&fx, fx.expense, Decimal::new(100, 0))]),
         None,
     )
     .await
@@ -360,8 +369,7 @@ async fn duplicate_control_key_refuses_across_budgets() {
     // Same key in a second budget (draft or not) refuses.
     let err = svc
         .create_budget(
-            fx.company,
-            new_budget(&fx, "B-2", vec![jan_line(&fx, fx.expense, Decimal::new(50, 0))]),
+            new_budget(unique_code("B-2"), vec![jan_line(&fx, fx.expense, Decimal::new(50, 0))]),
             None,
         )
         .await
@@ -372,8 +380,7 @@ async fn duplicate_control_key_refuses_across_budgets() {
     // add_line to an existing budget hits the same guard.
     let b2 = svc
         .create_budget(
-            fx.company,
-            new_budget(&fx, "B-3", vec![NewBudgetLine {
+            new_budget(unique_code("B-3"), vec![NewBudgetLine {
                 account_id: fx.bank,
                 cost_center_id: None,
                 fiscal_period_id: fx.jan,
@@ -385,14 +392,13 @@ async fn duplicate_control_key_refuses_across_budgets() {
         .await
         .unwrap();
     let err = svc
-        .add_line(fx.company, b2.id, jan_line(&fx, fx.expense, Decimal::ONE), None)
+        .add_line(b2.id, jan_line(&fx, fx.expense, Decimal::ONE), None)
         .await
         .unwrap_err();
     assert_eq!(code(&err), "budget_coverage_conflict");
 
     // A different cost center is a different key — allowed.
     svc.add_line(
-        fx.company,
         b2.id,
         NewBudgetLine {
             account_id: fx.expense,
@@ -414,10 +420,10 @@ async fn confirm_without_lines_refuses() {
     let fx = fixture(&pool).await;
     let svc = BudgetWorkflowService::new(pool.clone());
     let budget = svc
-        .create_budget(fx.company, new_budget(&fx, "B-E", vec![]), None)
+        .create_budget(new_budget(unique_code("B-E"), vec![]), None)
         .await
         .unwrap();
-    let err = svc.confirm(fx.company, budget.id, None).await.unwrap_err();
+    let err = svc.confirm(budget.id, None).await.unwrap_err();
     assert_eq!(code(&err), "budget_no_lines");
     assert_eq!(err.http_status(), 422);
 }
@@ -429,45 +435,44 @@ async fn line_edits_are_draft_only() {
     let svc = BudgetWorkflowService::new(pool.clone());
     let budget = svc
         .create_budget(
-            fx.company,
-            new_budget(&fx, "B-D", vec![jan_line(&fx, fx.expense, Decimal::new(100, 0))]),
+            new_budget(unique_code("B-D"), vec![jan_line(&fx, fx.expense, Decimal::new(100, 0))]),
             None,
         )
         .await
         .unwrap();
 
     // Draft: edit + delete lines freely.
-    let line = svc.budget_detail(fx.company, budget.id).await.unwrap().1.remove(0);
+    let line = svc.budget_detail(budget.id).await.unwrap().1.remove(0);
     let updated = svc
-        .update_line(fx.company, budget.id, line.id, Decimal::new(250, 0), Some("raised".into()), None)
+        .update_line(budget.id, line.id, Decimal::new(250, 0), Some("raised".into()), None)
         .await
         .unwrap();
     assert_eq!(updated.planned_amount, Decimal::new(250, 0));
-    svc.delete_line(fx.company, budget.id, line.id, None).await.unwrap();
+    svc.delete_line(budget.id, line.id, None).await.unwrap();
     let line2 = svc
-        .add_line(fx.company, budget.id, jan_line(&fx, fx.expense, Decimal::new(300, 0)), None)
+        .add_line(budget.id, jan_line(&fx, fx.expense, Decimal::new(300, 0)), None)
         .await
         .unwrap();
 
-    svc.confirm(fx.company, budget.id, None).await.unwrap();
+    svc.confirm(budget.id, None).await.unwrap();
 
     // Confirmed: every line mutation refuses.
     assert_eq!(
-        code(&svc.add_line(fx.company, budget.id, jan_line(&fx, fx.bank, Decimal::ONE), None).await.unwrap_err()),
+        code(&svc.add_line(budget.id, jan_line(&fx, fx.bank, Decimal::ONE), None).await.unwrap_err()),
         "budget_not_draft"
     );
     assert_eq!(
-        code(&svc.update_line(fx.company, budget.id, line2.id, Decimal::ONE, None, None).await.unwrap_err()),
+        code(&svc.update_line(budget.id, line2.id, Decimal::ONE, None, None).await.unwrap_err()),
         "budget_not_draft"
     );
     assert_eq!(
-        code(&svc.delete_line(fx.company, budget.id, line2.id, None).await.unwrap_err()),
+        code(&svc.delete_line(budget.id, line2.id, None).await.unwrap_err()),
         "budget_not_draft"
     );
     // Non-enforcement header fields freeze too.
     assert_eq!(
         code(&svc
-            .update_budget(fx.company, budget.id, BudgetPatch { name: Some("x".into()), ..Default::default() }, None)
+            .update_budget(budget.id, BudgetPatch { name: Some("x".into()), ..Default::default() }, None)
             .await
             .unwrap_err()),
         "budget_not_draft"
@@ -481,8 +486,7 @@ async fn enforcement_follows_its_own_edit_rule() {
     let svc = BudgetWorkflowService::new(pool.clone());
     let budget = svc
         .create_budget(
-            fx.company,
-            new_budget(&fx, "B-F", vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
+            new_budget(unique_code("B-F"), vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
             None,
         )
         .await
@@ -491,7 +495,6 @@ async fn enforcement_follows_its_own_edit_rule() {
     // Editable while draft.
     let flipped = svc
         .update_budget(
-            fx.company,
             budget.id,
             BudgetPatch { enforcement: Some(BudgetEnforcement::Block), ..Default::default() },
             None,
@@ -501,10 +504,9 @@ async fn enforcement_follows_its_own_edit_rule() {
     assert_eq!(flipped.enforcement, BudgetEnforcement::Block);
 
     // Still editable while confirmed — the day-to-day posture knob.
-    svc.confirm(fx.company, budget.id, None).await.unwrap();
+    svc.confirm(budget.id, None).await.unwrap();
     let flipped = svc
         .update_budget(
-            fx.company,
             budget.id,
             BudgetPatch { enforcement: Some(BudgetEnforcement::Warn), ..Default::default() },
             None,
@@ -514,10 +516,9 @@ async fn enforcement_follows_its_own_edit_rule() {
     assert_eq!(flipped.enforcement, BudgetEnforcement::Warn);
 
     // Frozen once closed.
-    svc.close(fx.company, budget.id, None).await.unwrap();
+    svc.close(budget.id, None).await.unwrap();
     let err = svc
         .update_budget(
-            fx.company,
             budget.id,
             BudgetPatch { enforcement: Some(BudgetEnforcement::Block), ..Default::default() },
             None,
@@ -535,57 +536,58 @@ async fn transitions_are_cas() {
     let svc = BudgetWorkflowService::new(pool.clone());
     let budget = svc
         .create_budget(
-            fx.company,
-            new_budget(&fx, "B-C", vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
+            new_budget(unique_code("B-C"), vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
             None,
         )
         .await
         .unwrap();
 
     // close from draft refuses (409)
-    let err = svc.close(fx.company, budget.id, None).await.unwrap_err();
+    let err = svc.close(budget.id, None).await.unwrap_err();
     assert_eq!(code(&err), "budget_invalid_transition");
     assert_eq!(err.http_status(), 409);
 
-    svc.confirm(fx.company, budget.id, None).await.unwrap();
+    svc.confirm(budget.id, None).await.unwrap();
     // confirm twice refuses
-    let err = svc.confirm(fx.company, budget.id, None).await.unwrap_err();
+    let err = svc.confirm(budget.id, None).await.unwrap_err();
     assert_eq!(code(&err), "budget_invalid_transition");
 
     // cancel from confirmed is allowed; every later verb refuses
-    let cancelled = svc.cancel(fx.company, budget.id, None).await.unwrap();
+    let cancelled = svc.cancel(budget.id, None).await.unwrap();
     assert_eq!(cancelled.status, BudgetStatus::Cancelled);
     for err in [
-        svc.confirm(fx.company, budget.id, None).await.unwrap_err(),
-        svc.close(fx.company, budget.id, None).await.unwrap_err(),
-        svc.cancel(fx.company, budget.id, None).await.unwrap_err(),
+        svc.confirm(budget.id, None).await.unwrap_err(),
+        svc.close(budget.id, None).await.unwrap_err(),
+        svc.cancel(budget.id, None).await.unwrap_err(),
     ] {
         assert_eq!(code(&err), "budget_invalid_transition");
     }
 
     // Unknown budget 404s.
     assert_eq!(
-        code(&svc.confirm(fx.company, Uuid::new_v4(), None).await.unwrap_err()),
+        code(&svc.confirm(Uuid::new_v4(), None).await.unwrap_err()),
         "budget_not_found"
     );
 }
 
 #[tokio::test]
 async fn repeated_code_refuses() {
+    // The service's code_taken pre-check keeps the typed guard deterministic
+    // on an undecorated database; in a decorated deployment the decorator's
+    // (org_unit_id, code) partial unique is the raced-insert backstop.
     let pool = pool().await;
     let fx = fixture(&pool).await;
     let svc = BudgetWorkflowService::new(pool.clone());
+    let shared = unique_code("SAME");
     svc.create_budget(
-        fx.company,
-        new_budget(&fx, "SAME", vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
+        new_budget(shared.clone(), vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
         None,
     )
     .await
     .unwrap();
     let err = svc
         .create_budget(
-            fx.company,
-            new_budget(&fx, "SAME", vec![NewBudgetLine {
+            new_budget(shared, vec![NewBudgetLine {
                 account_id: fx.bank,
                 cost_center_id: None,
                 fiscal_period_id: fx.feb,
@@ -598,26 +600,4 @@ async fn repeated_code_refuses() {
         .unwrap_err();
     assert_eq!(code(&err), "budget_code_taken");
     assert_eq!(err.http_status(), 422);
-}
-
-#[tokio::test]
-async fn cross_tenant_budget_is_invisible() {
-    // The belt-and-braces predicate: another company's id simply does not exist.
-    let pool = pool().await;
-    let fx = fixture(&pool).await;
-    let svc = BudgetWorkflowService::new(pool.clone());
-    let budget = svc
-        .create_budget(
-            fx.company,
-            new_budget(&fx, "B-X", vec![jan_line(&fx, fx.expense, Decimal::ONE)]),
-            None,
-        )
-        .await
-        .unwrap();
-    let other = Uuid::new_v4();
-    assert_eq!(
-        code(&svc.confirm(other, budget.id, None).await.unwrap_err()),
-        "budget_not_found"
-    );
-    assert!(svc.budget_detail(other, budget.id).await.is_err());
 }

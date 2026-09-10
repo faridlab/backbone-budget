@@ -37,9 +37,6 @@ pub struct CreateBudgetLineDto {
     #[serde(alias = "budget_id")]
     pub budget_id: Uuid,
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    #[serde(alias = "company_id")]
-    pub company_id: Uuid,
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(alias = "account_id")]
     pub account_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "cost_center_id")]
@@ -77,9 +74,6 @@ pub struct UpdateBudgetLineDto {
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(alias = "budget_id")]
     pub budget_id: Uuid,
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    #[serde(alias = "company_id")]
-    pub company_id: Uuid,
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(alias = "account_id")]
     pub account_id: Uuid,
@@ -119,9 +113,6 @@ pub struct PatchBudgetLineDto {
     #[serde(skip_serializing_if = "Option::is_none", alias = "budget_id")]
     pub budget_id: Option<Uuid>,
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    #[serde(skip_serializing_if = "Option::is_none", alias = "company_id")]
-    pub company_id: Option<Uuid>,
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "account_id")]
     pub account_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "cost_center_id")]
@@ -146,7 +137,7 @@ pub struct PatchBudgetLineDto {
 impl PatchBudgetLineDto {
     /// Check if any field is set
     pub fn has_changes(&self) -> bool {
-        self.budget_id.is_some() || self.company_id.is_some() || self.account_id.is_some() || self.cost_center_id.is_some() || self.fiscal_period_id.is_some() || self.fiscal_year.is_some() || self.fiscal_month.is_some() || self.planned_amount.is_some() || self.notes.is_some()
+        self.budget_id.is_some() || self.account_id.is_some() || self.cost_center_id.is_some() || self.fiscal_period_id.is_some() || self.fiscal_year.is_some() || self.fiscal_month.is_some() || self.planned_amount.is_some() || self.notes.is_some()
     }
 }
 
@@ -166,8 +157,6 @@ pub struct BudgetLineResponseDto {
     pub id: Uuid,
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     pub budget_id: Uuid,
-    #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
-    pub company_id: Uuid,
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     pub account_id: Uuid,
     pub cost_center_id: Option<Uuid>,
@@ -236,8 +225,8 @@ impl BudgetLineListResponseDto {
 pub struct BudgetLineSummaryDto {
     pub id: Uuid,
     pub budget_id: Uuid,
-    pub company_id: Uuid,
     pub account_id: Uuid,
+    pub cost_center_id: Option<Uuid>,
     pub created_at: Option<DateTime<Utc>>,
 }
 
@@ -250,7 +239,6 @@ impl From<BudgetLine> for BudgetLineResponseDto {
         Self {
             id: entity.id,
             budget_id: entity.budget_id,
-            company_id: entity.company_id,
             account_id: entity.account_id,
             cost_center_id: entity.cost_center_id,
             fiscal_period_id: entity.fiscal_period_id,
@@ -269,8 +257,8 @@ impl From<BudgetLine> for BudgetLineSummaryDto {
         Self {
             id: entity.id,
             budget_id: entity.budget_id,
-            company_id: entity.company_id,
             account_id: entity.account_id,
+            cost_center_id: entity.cost_center_id,
             created_at,
         }
     }
@@ -281,7 +269,6 @@ impl From<CreateBudgetLineDto> for BudgetLine {
         Self {
             id: Uuid::new_v4(),
             budget_id: dto.budget_id,
-            company_id: dto.company_id,
             account_id: dto.account_id,
             cost_center_id: dto.cost_center_id,
             fiscal_period_id: dto.fiscal_period_id,
@@ -299,7 +286,6 @@ impl From<&BudgetLine> for BudgetLineResponseDto {
         Self {
             id: entity.id.clone(),
             budget_id: entity.budget_id.clone(),
-            company_id: entity.company_id.clone(),
             account_id: entity.account_id.clone(),
             cost_center_id: entity.cost_center_id.clone(),
             fiscal_period_id: entity.fiscal_period_id.clone(),
@@ -321,7 +307,6 @@ impl backbone_core::FromCreateDto<CreateBudgetLineDto> for BudgetLine {
 impl backbone_core::ApplyUpdateDto<UpdateBudgetLineDto> for BudgetLine {
     fn apply_update(mut self, dto: UpdateBudgetLineDto) -> backbone_core::ServiceResult<Self> {
         self.budget_id = dto.budget_id;
-        self.company_id = dto.company_id;
         self.account_id = dto.account_id;
         self.cost_center_id = dto.cost_center_id;
         self.fiscal_period_id = dto.fiscal_period_id;

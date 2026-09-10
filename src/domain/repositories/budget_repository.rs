@@ -7,7 +7,6 @@
 
 use async_trait::async_trait;
 use anyhow::Result;
-use uuid::Uuid;
 
 use crate::domain::entity::{Budget, BudgetEnforcement, BudgetStatus};
 
@@ -44,7 +43,6 @@ pub struct BudgetPaginatedResult {
 /// Filter parameters for list queries
 #[derive(Debug, Clone, Default)]
 pub struct BudgetFilter {
-    pub company_id: Option<Uuid>,
     pub code: Option<String>,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -55,7 +53,7 @@ pub struct BudgetFilter {
 impl BudgetFilter {
     /// Check if any filter is set
     pub fn has_filters(&self) -> bool {
-        self.company_id.is_some() || self.code.is_some() || self.name.is_some() || self.description.is_some() || self.status.is_some() || self.enforcement.is_some()
+        self.code.is_some() || self.name.is_some() || self.description.is_some() || self.status.is_some() || self.enforcement.is_some()
     }
 }
 

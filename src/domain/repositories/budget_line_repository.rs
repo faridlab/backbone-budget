@@ -45,7 +45,6 @@ pub struct BudgetLinePaginatedResult {
 #[derive(Debug, Clone, Default)]
 pub struct BudgetLineFilter {
     pub budget_id: Option<Uuid>,
-    pub company_id: Option<Uuid>,
     pub account_id: Option<Uuid>,
     pub cost_center_id: Option<Uuid>,
     pub fiscal_period_id: Option<Uuid>,
@@ -55,7 +54,7 @@ pub struct BudgetLineFilter {
 impl BudgetLineFilter {
     /// Check if any filter is set
     pub fn has_filters(&self) -> bool {
-        self.budget_id.is_some() || self.company_id.is_some() || self.account_id.is_some() || self.cost_center_id.is_some() || self.fiscal_period_id.is_some() || self.notes.is_some()
+        self.budget_id.is_some() || self.account_id.is_some() || self.cost_center_id.is_some() || self.fiscal_period_id.is_some() || self.notes.is_some()
     }
 }
 

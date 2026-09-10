@@ -1,12 +1,14 @@
 //! Budget verbs + control reads over HTTP (hand-authored, user-owned; see
 //! `metaphor.codegen.yaml`). These handlers are thin: parse, delegate to
 //! [`BudgetWorkflowService`] / [`BudgetControlService`], map the typed error
-//! to its code + status. All tenant truth comes from the [`CompanyContext`]
-//! the host's `company_auth` middleware inserts — never from the body.
+//! to its code + status. The acting principal comes from the [`OrgContext`]
+//! the composing service's org auth middleware inserts — used only to gate
+//! the route and stamp actor metadata; never as a query predicate.
 //!
-//! Fence posture mirrors the family: reads ride the DB fence (strict RLS +
-//! `app.company_id` request binding) and every verb's SQL carries its own
-//! company predicate, so a cross-tenant id simply matches zero rows → 404.
+//! Tenancy: none, by design (ADR-0029). No handler threads a tenant key —
+//! the services relay the ambient request org scope onto their transactions,
+//! and the composing decorator's row-level fences decide which rows a caller
+//! can see and write. Unfenced deployments get an unfenced module.
 
 use std::sync::Arc;
 
@@ -16,7 +18,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use backbone_auth::company::CompanyContext;
+use backbone_auth::org::OrgContext;
 use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -69,7 +71,6 @@ pub fn control_err(e: BudgetControlError) -> axum::response::Response {
 #[serde(rename_all = "camelCase")]
 pub struct BudgetBody<'a> {
     pub id: Uuid,
-    pub company_id: Uuid,
     pub code: &'a str,
     pub name: &'a str,
     pub description: &'a Option<String>,
@@ -84,7 +85,6 @@ impl<'a> From<&'a Budget> for BudgetBody<'a> {
     fn from(b: &'a Budget) -> Self {
         Self {
             id: b.id,
-            company_id: b.company_id,
             code: &b.code,
             name: &b.name,
             description: &b.description,
@@ -282,7 +282,7 @@ fn parse_enforcement(s: Option<&str>) -> Option<BudgetEnforcement> {
 
 /// The acting principal as a uuid actor stamp, when the token's `sub` parses
 /// as one.
-fn actor(t: &CompanyContext) -> Option<Uuid> {
+fn actor(t: &OrgContext) -> Option<Uuid> {
     Uuid::parse_str(&t.user_id).ok()
 }
 
@@ -290,7 +290,7 @@ fn actor(t: &CompanyContext) -> Option<Uuid> {
 
 pub async fn create_budget(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Json(b): Json<CreateBudgetBody>,
 ) -> axum::response::Response {
     let Some(enforcement) = parse_enforcement(b.enforcement.as_deref()) else {
@@ -324,10 +324,7 @@ pub async fn create_budget(
         enforcement,
         lines,
     };
-    match svc
-        .create_budget(tenant.company_id, input, actor(&tenant))
-        .await
-    {
+    match svc.create_budget(input, actor(&org)).await {
         Ok(budget) => (StatusCode::CREATED, Json(BudgetBody::from(&budget))).into_response(),
         Err(e) => workflow_err(e),
     }
@@ -335,7 +332,7 @@ pub async fn create_budget(
 
 pub async fn update_budget(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path(budget_id): Path<Uuid>,
     Json(b): Json<PatchBudgetBody>,
 ) -> axum::response::Response {
@@ -363,7 +360,7 @@ pub async fn update_budget(
         enforcement,
     };
     match svc
-        .update_budget(tenant.company_id, budget_id, patch, actor(&tenant))
+        .update_budget(budget_id, patch, actor(&org))
         .await
     {
         Ok(budget) => (StatusCode::OK, Json(BudgetBody::from(&budget))).into_response(),
@@ -373,13 +370,10 @@ pub async fn update_budget(
 
 pub async fn budget_detail(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    _org: OrgContext,
     Path(budget_id): Path<Uuid>,
 ) -> axum::response::Response {
-    match svc
-        .budget_detail(tenant.company_id, budget_id)
-        .await
-    {
+    match svc.budget_detail(budget_id).await {
         Ok((budget, lines)) => (
             StatusCode::OK,
             Json(BudgetDetailBody {
@@ -394,13 +388,12 @@ pub async fn budget_detail(
 
 pub async fn add_line(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path(budget_id): Path<Uuid>,
     Json(b): Json<CreateLineBody>,
 ) -> axum::response::Response {
     match svc
         .add_line(
-            tenant.company_id,
             budget_id,
             NewBudgetLine {
                 account_id: b.account_id,
@@ -409,7 +402,7 @@ pub async fn add_line(
                 planned_amount: b.planned_amount,
                 notes: b.notes,
             },
-            actor(&tenant),
+            actor(&org),
         )
         .await
     {
@@ -420,18 +413,17 @@ pub async fn add_line(
 
 pub async fn update_line(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path((budget_id, line_id)): Path<(Uuid, Uuid)>,
     Json(b): Json<LinePatchBody>,
 ) -> axum::response::Response {
     match svc
         .update_line(
-            tenant.company_id,
             budget_id,
             line_id,
             b.planned_amount,
             b.notes,
-            actor(&tenant),
+            actor(&org),
         )
         .await
     {
@@ -442,13 +434,10 @@ pub async fn update_line(
 
 pub async fn delete_line(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path((budget_id, line_id)): Path<(Uuid, Uuid)>,
 ) -> axum::response::Response {
-    match svc
-        .delete_line(tenant.company_id, budget_id, line_id, actor(&tenant))
-        .await
-    {
+    match svc.delete_line(budget_id, line_id, actor(&org)).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => workflow_err(e),
     }
@@ -456,13 +445,10 @@ pub async fn delete_line(
 
 pub async fn confirm_budget(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path(budget_id): Path<Uuid>,
 ) -> axum::response::Response {
-    match svc
-        .confirm(tenant.company_id, budget_id, actor(&tenant))
-        .await
-    {
+    match svc.confirm(budget_id, actor(&org)).await {
         Ok(budget) => (StatusCode::OK, Json(BudgetBody::from(&budget))).into_response(),
         Err(e) => workflow_err(e),
     }
@@ -470,10 +456,10 @@ pub async fn confirm_budget(
 
 pub async fn close_budget(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path(budget_id): Path<Uuid>,
 ) -> axum::response::Response {
-    match svc.close(tenant.company_id, budget_id, actor(&tenant)).await {
+    match svc.close(budget_id, actor(&org)).await {
         Ok(budget) => (StatusCode::OK, Json(BudgetBody::from(&budget))).into_response(),
         Err(e) => workflow_err(e),
     }
@@ -481,13 +467,10 @@ pub async fn close_budget(
 
 pub async fn cancel_budget(
     State(svc): State<Arc<BudgetWorkflowService>>,
-    tenant: CompanyContext,
+    org: OrgContext,
     Path(budget_id): Path<Uuid>,
 ) -> axum::response::Response {
-    match svc
-        .cancel(tenant.company_id, budget_id, actor(&tenant))
-        .await
-    {
+    match svc.cancel(budget_id, actor(&org)).await {
         Ok(budget) => (StatusCode::OK, Json(BudgetBody::from(&budget))).into_response(),
         Err(e) => workflow_err(e),
     }
@@ -495,12 +478,12 @@ pub async fn cancel_budget(
 
 pub async fn achievement(
     State(svc): State<Arc<BudgetControlService>>,
-    tenant: CompanyContext,
+    _org: OrgContext,
     Path(budget_id): Path<Uuid>,
     Query(q): Query<AchievementQuery>,
 ) -> axum::response::Response {
     let through = q.through.unwrap_or_else(|| Utc::now().date_naive());
-    match svc.achievement(tenant.company_id, budget_id, through).await {
+    match svc.achievement(budget_id, through).await {
         Ok(rows) => (
             StatusCode::OK,
             Json(AchievementBody {
@@ -516,16 +499,11 @@ pub async fn achievement(
 
 pub async fn coverage(
     State(svc): State<Arc<BudgetControlService>>,
-    tenant: CompanyContext,
+    _org: OrgContext,
     Query(q): Query<CoverageQuery>,
 ) -> axum::response::Response {
     match svc
-        .coverage(
-            tenant.company_id,
-            q.account_id,
-            q.cost_center_id,
-            q.fiscal_period_id,
-        )
+        .coverage(q.account_id, q.cost_center_id, q.fiscal_period_id)
         .await
     {
         Ok(None) => (

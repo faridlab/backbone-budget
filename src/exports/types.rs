@@ -49,7 +49,6 @@ impl From<BudgetId> for Uuid {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetDto {
     pub id: BudgetId,
-    pub company_id: Uuid,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -114,7 +113,6 @@ impl From<BudgetLineId> for Uuid {
 pub struct BudgetLineDto {
     pub id: BudgetLineId,
     pub budget_id: Uuid,
-    pub company_id: Uuid,
     pub account_id: Uuid,
     pub cost_center_id: Option<Uuid>,
     pub fiscal_period_id: Uuid,
