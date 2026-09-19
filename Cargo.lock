@@ -209,7 +209,7 @@ dependencies = [
 [[package]]
 name = "backbone-auth"
 version = "2.0.0"
-source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.19#f9edb85b2ffdcc4de44b819d1ff35c47fb720e19"
+source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.24#e3e6e80ac387834717e91c0461d361f902dcacd5"
 dependencies = [
  "anyhow",
  "argon2",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "backbone-budget"
-version = "0.2.1"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -276,7 +276,7 @@ dependencies = [
 [[package]]
 name = "backbone-core"
 version = "2.0.0"
-source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.19#f9edb85b2ffdcc4de44b819d1ff35c47fb720e19"
+source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.24#e3e6e80ac387834717e91c0461d361f902dcacd5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -303,7 +303,7 @@ dependencies = [
 [[package]]
 name = "backbone-messaging"
 version = "2.0.0"
-source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.19#f9edb85b2ffdcc4de44b819d1ff35c47fb720e19"
+source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.24#e3e6e80ac387834717e91c0461d361f902dcacd5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -318,7 +318,7 @@ dependencies = [
 [[package]]
 name = "backbone-orm"
 version = "2.0.0"
-source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.19#f9edb85b2ffdcc4de44b819d1ff35c47fb720e19"
+source = "git+https://github.com/faridlab/backbone-framework?tag=v2.7.24#e3e6e80ac387834717e91c0461d361f902dcacd5"
 dependencies = [
  "anyhow",
  "async-trait",
