@@ -1,6 +1,6 @@
 [package]
 name = "backbone-budget"
-version = "0.2.15"
+version = "0.2.16"
 edition = "2021"
 description = "Budget control — plan positions (account x cost center x period), achievements from GL reads, warn/block enforcement at the posting chokepoint"
 
@@ -17,10 +17,10 @@ path = "src/lib.rs"
 # or `rev = "<commit-sha>"`. Cargo dedupes the git fetch — the repo is only
 # cloned once even though four crates reference it.
 # -----------------------------------------------------------------------------
-backbone-core = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.31", features = ["postgres"] }
-backbone-orm = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.31" }
-backbone-auth = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.31", features = ["axum"] }
-backbone-messaging = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.31" }
+backbone-core = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.32", features = ["postgres"] }
+backbone-orm = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.32" }
+backbone-auth = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.32", features = ["axum"] }
+backbone-messaging = { git = "https://github.com/faridlab/backbone-framework", tag = "v2.7.32" }
 
 # OpenAPI schema derive. The generated entity and DTO files import it behind the
 # `openapi` feature; the dependency itself must not be feature-gated, or
