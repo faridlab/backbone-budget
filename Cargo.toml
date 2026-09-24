@@ -1,6 +1,6 @@
 [package]
 name = "backbone-budget"
-version = "0.2.14"
+version = "0.2.15"
 edition = "2021"
 description = "Budget control — plan positions (account x cost center x period), achievements from GL reads, warn/block enforcement at the posting chokepoint"
 
