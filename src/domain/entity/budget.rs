@@ -240,6 +240,8 @@ impl backbone_orm::EntityRepoMeta for Budget {
         m.insert("id".to_string(), "uuid".to_string());
         m.insert("status".to_string(), "budget_status".to_string());
         m.insert("enforcement".to_string(), "budget_enforcement".to_string());
+        m.insert("date_from".to_string(), "date".to_string());
+        m.insert("date_to".to_string(), "date".to_string());
         m
     }
     fn search_fields() -> &'static [&'static str] {

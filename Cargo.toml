@@ -1,6 +1,6 @@
 [package]
 name = "backbone-budget"
-version = "0.2.20"
+version = "0.3.0"
 edition = "2021"
 description = "Budget control — plan positions (account x cost center x period), achievements from GL reads, warn/block enforcement at the posting chokepoint"
 license = "MIT OR Apache-2.0"
@@ -20,10 +20,10 @@ path = "src/lib.rs"
 # or `rev = "<commit-sha>"`. Cargo dedupes the git fetch — the repo is only
 # cloned once even though four crates reference it.
 # -----------------------------------------------------------------------------
-backbone-core = { version = "2.7.35", features = ["postgres"] }
-backbone-orm = { version = "2.7.35" }
-backbone-auth = { version = "2.7.35", features = ["axum"] }
-backbone-messaging = { version = "2.7.35" }
+backbone-core = { version = "3.0.0", features = ["postgres"] }
+backbone-orm = { version = "3.0.0" }
+backbone-auth = { version = "3.0.0", features = ["axum"] }
+backbone-messaging = { version = "3.0.0" }
 
 # OpenAPI schema derive. The generated entity and DTO files import it behind the
 # `openapi` feature; the dependency itself must not be feature-gated, or

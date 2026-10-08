@@ -10,6 +10,5 @@ pub mod budget_api_test;
 pub mod budget_line_api_test;
 
 // Re-exports for convenience
-pub use crud_test_base::*;
 pub use budget_api_test::*;
 pub use budget_line_api_test::*;
