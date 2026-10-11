@@ -11,15 +11,12 @@ pub mod budget_service;
 pub mod budget_line_service;
 
 // <<< CUSTOM
-pub mod budget_workflow_service;
-pub mod budget_control_service;
 // END CUSTOM
 
 pub use budget_service::BudgetService;
 pub use budget_line_service::BudgetLineService;
 // <<< CUSTOM
-pub use budget_workflow_service::{BudgetPatch, BudgetWorkflowError, BudgetWorkflowService, NewBudget, NewBudgetLine};
-pub use budget_control_service::{
-    BudgetBreachInfo, BudgetControlError, BudgetControlLine, BudgetControlService,
-};
 // END CUSTOM
+
+// This directory's extension (hand-written; ADR-0031).
+include!("mod.ext.rs");

@@ -27,6 +27,16 @@ pub mod exports;
 // <<< CUSTOM MODULES
 // END CUSTOM
 
+// The module's extension (hand-written; ADR-0031).
+#[path = "lib.ext.rs"]
+mod lib_ext;
+pub use lib_ext::*;
+/// This crate's module and builder under fixed names, for the extension's `impl` blocks.
+#[allow(dead_code)]
+pub(crate) type ThisModule = BudgetModule;
+#[allow(dead_code)]
+pub(crate) type ThisModuleBuilder = BudgetModuleBuilder;
+
 // Re-exports for convenience - Domain entities
 pub use domain::entity::*;
 
@@ -56,14 +66,33 @@ use sqlx::PgPool;
 pub struct BudgetModule {
     pub(crate) budget_service: Arc<BudgetService>,
     pub(crate) budget_line_service: Arc<BudgetLineService>,
+    /// The module's extension state (`lib.ext.rs`); its fields read through `Deref`.
+    pub(crate) ext: ModuleExt,
     // <<< CUSTOM FIELDS
-    pub(crate) budget_workflow_service: std::sync::Arc<
-        application::service::budget_workflow_service::BudgetWorkflowService,
-    >,
-    pub(crate) budget_control_service: std::sync::Arc<
-        application::service::budget_control_service::BudgetControlService,
-    >,
     // END CUSTOM
+}
+
+impl std::ops::Deref for BudgetModule {
+    type Target = ModuleExt;
+    fn deref(&self) -> &Self::Target {
+        &self.ext
+    }
+}
+
+impl std::ops::DerefMut for BudgetModule {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ext
+    }
+}
+
+/// What the extension's `build` hook receives from the generated build (ADR-0031).
+#[allow(dead_code)]
+pub(crate) struct ModuleParts<'a> {
+    pub(crate) db_pool: &'a PgPool,
+    pub(crate) budget_service: &'a Arc<BudgetService>,
+    pub(crate) budget_repository: &'a Arc<BudgetRepository>,
+    pub(crate) budget_line_service: &'a Arc<BudgetLineService>,
+    pub(crate) budget_line_repository: &'a Arc<BudgetLineRepository>,
 }
 
 impl BudgetModule {
@@ -115,39 +144,29 @@ impl BudgetModule {
     }
 
     // <<< CUSTOM METHODS
-    /// The validated write path (lifecycle verbs + the guard matrix) — the
-    /// service behind [`presentation::http::create_guarded_budget_routes`].
-    pub fn budget_workflow_service(
-        &self,
-    ) -> &std::sync::Arc<application::service::budget_workflow_service::BudgetWorkflowService> {
-        &self.budget_workflow_service
-    }
-
-    /// The control/read side: posting evaluation (behind accounting's
-    /// host-wired `BudgetControlPort`), achievements, coverage. The composing
-    /// app's seam adapter calls this — there is no Cargo edge between the two
-    /// modules, so the host maps the types.
-    pub fn budget_control_service(
-        &self,
-    ) -> &std::sync::Arc<application::service::budget_control_service::BudgetControlService> {
-        &self.budget_control_service
-    }
-
-    /// Guarded composition: validated verbs + control reads + safe GETs, NO
-    /// generic budget/budget-line mutation. Mount behind the host's
-    /// org-auth middleware (it inserts the request `OrgContext` and binds the
-    /// ambient org scope the services relay).
-    pub fn guarded_routes(&self) -> Router {
-        presentation::http::create_guarded_budget_routes(self)
-    }
     // END CUSTOM
 }
 
 /// Builder for BudgetModule
 pub struct BudgetModuleBuilder {
     db_pool: Option<PgPool>,
+    /// The builder's extension state (`lib.ext.rs`); its fields read through `Deref`.
+    ext: ModuleBuilderExt,
     // <<< CUSTOM BUILDER FIELDS
     // END CUSTOM
+}
+
+impl std::ops::Deref for BudgetModuleBuilder {
+    type Target = ModuleBuilderExt;
+    fn deref(&self) -> &Self::Target {
+        &self.ext
+    }
+}
+
+impl std::ops::DerefMut for BudgetModuleBuilder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ext
+    }
 }
 
 impl BudgetModuleBuilder {
@@ -155,6 +174,7 @@ impl BudgetModuleBuilder {
     pub fn new() -> Self {
         Self {
             db_pool: None,
+            ext: Default::default(),
             // <<< CUSTOM BUILDER DEFAULTS
             // END CUSTOM
         }
@@ -183,24 +203,22 @@ impl BudgetModuleBuilder {
         let budget_line_service = Arc::new(BudgetLineService::with_repository(budget_line_repository.clone()));
 
         // <<< CUSTOM
-        let budget_workflow_service = std::sync::Arc::new(
-            application::service::budget_workflow_service::BudgetWorkflowService::new(
-                db_pool.clone(),
-            ),
-        );
-        let budget_control_service = std::sync::Arc::new(
-            application::service::budget_control_service::BudgetControlService::new(
-                db_pool.clone(),
-            ),
-        );
         // END CUSTOM
+
+        // The extension builds its own state from what the generated build made.
+        let ext = self.ext.build(&ModuleParts {
+            db_pool: &db_pool,
+            budget_service: &budget_service,
+            budget_repository: &budget_repository,
+            budget_line_service: &budget_line_service,
+            budget_line_repository: &budget_line_repository,
+        })?;
 
         Ok(BudgetModule {
             budget_service,
             budget_line_service,
+            ext,
             // <<< CUSTOM
-            budget_workflow_service,
-            budget_control_service,
             // END CUSTOM
         })
     }

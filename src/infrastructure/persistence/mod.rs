@@ -9,7 +9,6 @@ mod budget_line_repository;
 
 // Custom persistence modules
 // <<< CUSTOM
-pub mod budget_read_repository;
 // END CUSTOM
 
 // Re-exports
@@ -25,8 +24,7 @@ pub use backbone_orm::repository::{
 
 // Re-export custom persistence types
 // <<< CUSTOM
-pub use budget_read_repository::{
-    AchievementRow, AchievedRow, BudgetReadRepository, ControlPosition, NormalBalanceRow,
-    PeriodRow,
-};
 // END CUSTOM
+
+// This directory's extension (hand-written; ADR-0031).
+include!("mod.ext.rs");
