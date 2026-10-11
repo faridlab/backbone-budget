@@ -8,5 +8,3 @@ pub mod budget_line_domain_policy;
 pub use budget_domain_policy::BudgetDomainPolicy;
 pub use budget_line_domain_policy::BudgetLineDomainPolicy;
 
-// <<< CUSTOM
-// END CUSTOM

@@ -17,9 +17,5 @@ pub fn budget_line_validator() -> BudgetLineValidator {
     EntityValidator::new()
         .rule(NonNegative::new("fiscal_year", |e: &BudgetLine| e.fiscal_year as i64))
         .rule(OptionalNotBlank::new("notes", |e: &BudgetLine| e.notes.as_deref()))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM

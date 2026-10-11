@@ -10,13 +10,9 @@ pub use error::{ServiceError, ServiceResult};
 pub mod budget_service;
 pub mod budget_line_service;
 
-// <<< CUSTOM
-// END CUSTOM
 
 pub use budget_service::BudgetService;
 pub use budget_line_service::BudgetLineService;
-// <<< CUSTOM
-// END CUSTOM
 
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");

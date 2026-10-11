@@ -32,5 +32,3 @@ pub type BudgetService = GenericCrudService<
     BudgetRepository,
 >;
 
-// <<< CUSTOM
-// END CUSTOM

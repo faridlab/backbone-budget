@@ -11,5 +11,3 @@ pub mod budget_line_validator;
 pub use budget_validator::{BudgetValidator, budget_validator};
 pub use budget_line_validator::{BudgetLineValidator, budget_line_validator};
 
-// <<< CUSTOM
-// END CUSTOM

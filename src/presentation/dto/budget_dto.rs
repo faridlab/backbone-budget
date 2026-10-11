@@ -322,7 +322,7 @@ impl backbone_core::ApplyUpdateDto<UpdateBudgetDto> for Budget {
 // Custom DTOs
 // =============================================================================
 
-// <<< CUSTOM DTOs
 // Add custom DTOs specific to Budget here.
 // This section will be preserved during regeneration.
 // >>> END CUSTOM DTOs
+

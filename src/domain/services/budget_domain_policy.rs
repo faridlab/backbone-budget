@@ -18,5 +18,3 @@ use crate::domain::entity::Budget;
 /// service. `PermitAllPolicy` is the safe default until then.
 pub type BudgetDomainPolicy = PermitAllPolicy<Budget>;
 
-// <<< CUSTOM
-// END CUSTOM

@@ -11,8 +11,6 @@ use crate::domain::entity::BudgetLine;
 /// enum containing a `Crud(CrudEvent<BudgetLine>)` variant.
 pub type BudgetLineEvent = CrudEvent<BudgetLine>;
 
-// <<< CUSTOM
-// END CUSTOM
 
 use backbone_messaging::{CrudEventPublisher, NoOpCrudEventPublisher};
 use std::sync::Arc;

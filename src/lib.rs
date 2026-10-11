@@ -24,8 +24,6 @@ pub mod application;
 pub mod presentation;
 pub mod seeders;
 pub mod exports;
-// <<< CUSTOM MODULES
-// END CUSTOM
 
 // The module's extension (hand-written; ADR-0031).
 #[path = "lib.ext.rs"]
@@ -68,8 +66,6 @@ pub struct BudgetModule {
     pub(crate) budget_line_service: Arc<BudgetLineService>,
     /// The module's extension state (`lib.ext.rs`); its fields read through `Deref`.
     pub(crate) ext: ModuleExt,
-    // <<< CUSTOM FIELDS
-    // END CUSTOM
 }
 
 impl std::ops::Deref for BudgetModule {
@@ -143,8 +139,6 @@ impl BudgetModule {
             .merge(create_budget_line_read_routes(self.budget_line_service.clone()))
     }
 
-    // <<< CUSTOM METHODS
-    // END CUSTOM
 }
 
 /// Builder for BudgetModule
@@ -152,8 +146,6 @@ pub struct BudgetModuleBuilder {
     db_pool: Option<PgPool>,
     /// The builder's extension state (`lib.ext.rs`); its fields read through `Deref`.
     ext: ModuleBuilderExt,
-    // <<< CUSTOM BUILDER FIELDS
-    // END CUSTOM
 }
 
 impl std::ops::Deref for BudgetModuleBuilder {
@@ -175,8 +167,6 @@ impl BudgetModuleBuilder {
         Self {
             db_pool: None,
             ext: Default::default(),
-            // <<< CUSTOM BUILDER DEFAULTS
-            // END CUSTOM
         }
     }
 
@@ -186,8 +176,6 @@ impl BudgetModuleBuilder {
         self
     }
 
-    // <<< CUSTOM - custom builder methods
-    // END CUSTOM
 
     /// Build the module with configured dependencies
     pub fn build(self) -> anyhow::Result<BudgetModule> {
@@ -202,8 +190,6 @@ impl BudgetModuleBuilder {
         let budget_line_repository = Arc::new(BudgetLineRepository::new(db_pool.clone()));
         let budget_line_service = Arc::new(BudgetLineService::with_repository(budget_line_repository.clone()));
 
-        // <<< CUSTOM
-        // END CUSTOM
 
         // The extension builds its own state from what the generated build made.
         let ext = self.ext.build(&ModuleParts {
@@ -218,8 +204,6 @@ impl BudgetModuleBuilder {
             budget_service,
             budget_line_service,
             ext,
-            // <<< CUSTOM
-            // END CUSTOM
         })
     }
 }

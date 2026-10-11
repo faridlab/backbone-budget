@@ -12,5 +12,3 @@ pub use budget_event_handlers::BudgetEventHandler;
 pub use budget_line_events::{BudgetLineEvent, BudgetLineEventPublisher, NoopBudgetLineEventPublisher};
 pub use budget_line_event_handlers::BudgetLineEventHandler;
 
-// <<< CUSTOM
-// END CUSTOM

@@ -19,9 +19,5 @@ pub fn budget_validator() -> BudgetValidator {
         .rule(RequiredString::new("name", |e: &Budget| &e.name))
         .rule(OptionalNotBlank::new("description", |e: &Budget| e.description.as_deref()))
         .rule(NonNegative::new("fiscal_year", |e: &Budget| e.fiscal_year as i64))
-    // <<< CUSTOM RULES
-    // END CUSTOM RULES
 }
 
-// <<< CUSTOM
-// END CUSTOM

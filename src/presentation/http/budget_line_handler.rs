@@ -187,3 +187,4 @@ pub fn create_protected_budget_line_routes<A: AuthMiddleware + Send + Sync + 'st
             }
         }))
 }
+

@@ -9,5 +9,3 @@ pub use backbone_core::{Specification, AndSpecification, OrSpecification, NotSpe
 pub mod budget_specification;
 pub mod budget_line_specification;
 
-// <<< CUSTOM
-// END CUSTOM
