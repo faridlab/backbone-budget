@@ -56,7 +56,7 @@ impl backbone_core::write_guard::WriteGuard<Budget> for BudgetRowRules {
         };
         let row = &row;
         let old = ctx.before.and_then(|b| serde_json::to_value(b).ok());
-        let mut shadow = Vec::new();
+        let shadow = Vec::new();
         let mut refuse = Vec::new();
         // `code_required` (@required on Budget.code)
         if (create || (update && r::changed(old.as_ref(), row, &["code"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "code")), r::not(r::is_empty(r::trim(r::field(row, "code")))))) {
@@ -64,7 +64,7 @@ impl backbone_core::write_guard::WriteGuard<Budget> for BudgetRowRules {
         }
         // `code_max_length` (@max(30) on Budget.code)
         if (create || (update && r::changed(old.as_ref(), row, &["code"]))) && !r::holds(&r::le(r::length(r::field(row, "code")), r::Val::Num(30.0_f64))) {
-            shadow.push(Violation::new("code", "max_length", "code must be at most 30 characters").with_param("max", 30_i64));
+            refuse.push(Violation::new("code", "max_length", "code must be at most 30 characters").with_param("max", 30_i64));
         }
         // `name_required` (@required on Budget.name)
         if (create || (update && r::changed(old.as_ref(), row, &["name"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "name")), r::not(r::is_empty(r::trim(r::field(row, "name")))))) {
@@ -72,19 +72,19 @@ impl backbone_core::write_guard::WriteGuard<Budget> for BudgetRowRules {
         }
         // `name_max_length` (@max(100) on Budget.name)
         if (create || (update && r::changed(old.as_ref(), row, &["name"]))) && !r::holds(&r::le(r::length(r::field(row, "name")), r::Val::Num(100.0_f64))) {
-            shadow.push(Violation::new("name", "max_length", "name must be at most 100 characters").with_param("max", 100_i64));
+            refuse.push(Violation::new("name", "max_length", "name must be at most 100 characters").with_param("max", 100_i64));
         }
         // `description_max_length` (@max(500) on Budget.description)
         if (create || (update && r::changed(old.as_ref(), row, &["description"]))) && !r::holds(&r::le(r::length(r::field(row, "description")), r::Val::Num(500.0_f64))) {
-            shadow.push(Violation::new("description", "max_length", "description must be at most 500 characters").with_param("max", 500_i64));
+            refuse.push(Violation::new("description", "max_length", "description must be at most 500 characters").with_param("max", 500_i64));
         }
         // `fiscal_year_min` (@min(2020) on Budget.fiscal_year)
         if (create || (update && r::changed(old.as_ref(), row, &["fiscal_year"]))) && !r::holds(&r::ge(r::field(row, "fiscal_year"), r::Val::Num(2020.0_f64))) {
-            shadow.push(Violation::new("fiscal_year", "min", "fiscal_year must be at least 2020").with_param("min", 2020_i64));
+            refuse.push(Violation::new("fiscal_year", "min", "fiscal_year must be at least 2020").with_param("min", 2020_i64));
         }
         // `fiscal_year_max` (@max(2100) on Budget.fiscal_year)
         if (create || (update && r::changed(old.as_ref(), row, &["fiscal_year"]))) && !r::holds(&r::le(r::field(row, "fiscal_year"), r::Val::Num(2100.0_f64))) {
-            shadow.push(Violation::new("fiscal_year", "max", "fiscal_year must be at most 2100").with_param("max", 2100_i64));
+            refuse.push(Violation::new("fiscal_year", "max", "fiscal_year must be at most 2100").with_param("max", 2100_i64));
         }
         GuardOutcome { refuse, shadow }
     }
