@@ -250,6 +250,9 @@ impl backbone_orm::EntityRepoMeta for BudgetLine {
     fn search_fields() -> &'static [&'static str] {
         &[]
     }
+    fn relations() -> &'static [(&'static str, &'static str, &'static str)] {
+        &[("budget", "budgets", "budgetId")]
+    }
 }
 
 /// Builder for BudgetLine entity
