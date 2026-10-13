@@ -1,0 +1,17 @@
+-- Down: drop the declared rule constraints for budget module
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_notes_max_length__max_length;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_planned_amount_non_negative__non_negative;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_fiscal_month_max__max;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_fiscal_month_min__min;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_fiscal_year_max__max;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_fiscal_year_min__min;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_fiscal_period_id_required__required;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_account_id_required__required;
+ALTER TABLE IF EXISTS budget.budget_lines DROP CONSTRAINT IF EXISTS ck_budget_lines_budget_id_required__required;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_fiscal_year_max__max;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_fiscal_year_min__min;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_description_max_length__max_length;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_name_max_length__max_length;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_name_required__required;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_code_max_length__max_length;
+ALTER TABLE IF EXISTS budget.budgets DROP CONSTRAINT IF EXISTS ck_budgets_code_required__required;
