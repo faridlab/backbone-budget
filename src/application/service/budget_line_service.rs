@@ -32,3 +32,69 @@ pub type BudgetLineService = GenericCrudService<
     BudgetLineRepository,
 >;
 
+/// The rules the schema declares for BudgetLine, checked against the row a create or update
+/// would store. The generated build attaches it to [`BudgetLineService`]. A refusing rule's
+/// break answers 422; a rule in shadow is logged under `backbone::write_guard` and the
+/// write goes ahead.
+pub struct BudgetLineRowRules;
+
+#[async_trait::async_trait]
+impl backbone_core::write_guard::WriteGuard<BudgetLine> for BudgetLineRowRules {
+    async fn check(
+        &self,
+        ctx: &backbone_core::write_guard::WriteCtx<'_, BudgetLine>,
+    ) -> backbone_core::write_guard::GuardOutcome {
+        use backbone_core::row_rule as r;
+        use backbone_core::violation::Violation;
+        use backbone_core::write_guard::{GuardOutcome, WriteKind};
+        let (create, update) = (ctx.kind == WriteKind::Create, ctx.kind == WriteKind::Update);
+        let Some(after) = ctx.after.filter(|_| create || update) else {
+            return GuardOutcome::allow();
+        };
+        let Ok(row) = serde_json::to_value(after) else {
+            return GuardOutcome::allow();
+        };
+        let row = &row;
+        let old = ctx.before.and_then(|b| serde_json::to_value(b).ok());
+        let mut shadow = Vec::new();
+        let mut refuse = Vec::new();
+        // `budget_id_required` (@required on BudgetLine.budget_id)
+        if (create || (update && r::changed(old.as_ref(), row, &["budget_id"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "budget_id")), r::not(r::is_empty(r::trim(r::field(row, "budget_id")))))) {
+            refuse.push(Violation::new("budget_id", "required", "budget_id is required"));
+        }
+        // `account_id_required` (@required on BudgetLine.account_id)
+        if (create || (update && r::changed(old.as_ref(), row, &["account_id"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "account_id")), r::not(r::is_empty(r::trim(r::field(row, "account_id")))))) {
+            refuse.push(Violation::new("account_id", "required", "account_id is required"));
+        }
+        // `fiscal_period_id_required` (@required on BudgetLine.fiscal_period_id)
+        if (create || (update && r::changed(old.as_ref(), row, &["fiscal_period_id"]))) && !r::holds(&r::and(r::is_not_null(r::field(row, "fiscal_period_id")), r::not(r::is_empty(r::trim(r::field(row, "fiscal_period_id")))))) {
+            refuse.push(Violation::new("fiscal_period_id", "required", "fiscal_period_id is required"));
+        }
+        // `fiscal_year_min` (@min(2020) on BudgetLine.fiscal_year)
+        if (create || (update && r::changed(old.as_ref(), row, &["fiscal_year"]))) && !r::holds(&r::ge(r::field(row, "fiscal_year"), r::Val::Num(2020.0_f64))) {
+            shadow.push(Violation::new("fiscal_year", "min", "fiscal_year must be at least 2020").with_param("min", 2020_i64));
+        }
+        // `fiscal_year_max` (@max(2100) on BudgetLine.fiscal_year)
+        if (create || (update && r::changed(old.as_ref(), row, &["fiscal_year"]))) && !r::holds(&r::le(r::field(row, "fiscal_year"), r::Val::Num(2100.0_f64))) {
+            shadow.push(Violation::new("fiscal_year", "max", "fiscal_year must be at most 2100").with_param("max", 2100_i64));
+        }
+        // `fiscal_month_min` (@min(1) on BudgetLine.fiscal_month)
+        if (create || (update && r::changed(old.as_ref(), row, &["fiscal_month"]))) && !r::holds(&r::ge(r::field(row, "fiscal_month"), r::Val::Num(1.0_f64))) {
+            shadow.push(Violation::new("fiscal_month", "min", "fiscal_month must be at least 1").with_param("min", 1_i64));
+        }
+        // `fiscal_month_max` (@max(12) on BudgetLine.fiscal_month)
+        if (create || (update && r::changed(old.as_ref(), row, &["fiscal_month"]))) && !r::holds(&r::le(r::field(row, "fiscal_month"), r::Val::Num(12.0_f64))) {
+            shadow.push(Violation::new("fiscal_month", "max", "fiscal_month must be at most 12").with_param("max", 12_i64));
+        }
+        // `planned_amount_non_negative` (@non_negative on BudgetLine.planned_amount)
+        if (create || (update && r::changed(old.as_ref(), row, &["planned_amount"]))) && !r::holds(&r::ge(r::field(row, "planned_amount"), r::Val::Num(0.0_f64))) {
+            shadow.push(Violation::new("planned_amount", "non_negative", "planned_amount must not be negative"));
+        }
+        // `notes_max_length` (@max(500) on BudgetLine.notes)
+        if (create || (update && r::changed(old.as_ref(), row, &["notes"]))) && !r::holds(&r::le(r::length(r::field(row, "notes")), r::Val::Num(500.0_f64))) {
+            shadow.push(Violation::new("notes", "max_length", "notes must be at most 500 characters").with_param("max", 500_i64));
+        }
+        GuardOutcome { refuse, shadow }
+    }
+}
+

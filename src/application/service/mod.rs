@@ -13,6 +13,8 @@ pub mod budget_line_service;
 
 pub use budget_service::BudgetService;
 pub use budget_line_service::BudgetLineService;
+pub use budget_service::BudgetRowRules;
+pub use budget_line_service::BudgetLineRowRules;
 
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");
