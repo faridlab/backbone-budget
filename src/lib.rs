@@ -184,11 +184,11 @@ impl BudgetModuleBuilder {
 
         // Budget service
         let budget_repository = Arc::new(BudgetRepository::new(db_pool.clone()));
-        let budget_service = Arc::new(BudgetService::with_repository(budget_repository.clone()).with_guard(Arc::new(crate::application::service::BudgetRowRules)));
+        let budget_service = Arc::new(crate::application::service::build_budget_service(budget_repository.clone()));
 
         // BudgetLine service
         let budget_line_repository = Arc::new(BudgetLineRepository::new(db_pool.clone()));
-        let budget_line_service = Arc::new(BudgetLineService::with_repository(budget_line_repository.clone()).with_guard(Arc::new(crate::application::service::BudgetLineRowRules)));
+        let budget_line_service = Arc::new(crate::application::service::build_budget_line_service(budget_line_repository.clone()));
 
 
         // The extension builds its own state from what the generated build made.

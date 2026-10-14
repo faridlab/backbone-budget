@@ -16,5 +16,21 @@ pub use budget_line_service::BudgetLineService;
 pub use budget_service::BudgetRowRules;
 pub use budget_line_service::BudgetLineRowRules;
 
+/// A `BudgetService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_budget_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::BudgetRepository>,
+) -> BudgetService {
+    BudgetService::with_repository(repository).with_guard(std::sync::Arc::new(BudgetRowRules))
+}
+
+/// A `BudgetLineService` over `repository` with its write guard attached: the way to build it, so its writes are
+/// served only with the rules the schema declares.
+pub fn build_budget_line_service(
+    repository: std::sync::Arc<crate::infrastructure::persistence::BudgetLineRepository>,
+) -> BudgetLineService {
+    BudgetLineService::with_repository(repository).with_guard(std::sync::Arc::new(BudgetLineRowRules))
+}
+
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");
