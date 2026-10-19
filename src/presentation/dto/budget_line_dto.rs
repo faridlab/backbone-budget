@@ -103,20 +103,20 @@ pub struct PatchBudgetLineDto {
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "account_id")]
     pub account_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "cost_center_id")]
-    pub cost_center_id: Option<Uuid>,
+    #[serde(default, deserialize_with = "crate::presentation::dto::double_option", alias = "cost_center_id")]
+    pub cost_center_id: Option<Option<Uuid>>,
     #[cfg_attr(feature = "openapi", schema(example = "550e8400-e29b-41d4-a716-446655440000"))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "fiscal_period_id")]
     pub fiscal_period_id: Option<Uuid>,
     #[cfg_attr(feature = "openapi", schema(example = 42))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "fiscal_year")]
     pub fiscal_year: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "fiscal_month")]
-    pub fiscal_month: Option<i32>,
+    #[serde(default, deserialize_with = "crate::presentation::dto::double_option", alias = "fiscal_month")]
+    pub fiscal_month: Option<Option<i32>>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "planned_amount")]
     pub planned_amount: Option<Decimal>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notes: Option<String>,
+    #[serde(default, deserialize_with = "crate::presentation::dto::double_option")]
+    pub notes: Option<Option<String>>,
 }
 
 impl PatchBudgetLineDto {
@@ -302,12 +302,4 @@ impl backbone_core::ApplyUpdateDto<UpdateBudgetLineDto> for BudgetLine {
         Ok(self)
     }
 }
-
-// =============================================================================
-// Custom DTOs
-// =============================================================================
-
-// Add custom DTOs specific to BudgetLine here.
-// This section will be preserved during regeneration.
-// >>> END CUSTOM DTOs
 

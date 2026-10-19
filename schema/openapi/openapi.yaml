@@ -818,7 +818,6 @@ components:
         - date_to
         - status
         - enforcement
-        - metadata
       properties:
         code:
           type: string
@@ -845,8 +844,6 @@ components:
           type: string
         enforcement:
           type: string
-        metadata:
-          type: object
 
     UpdateBudgetRequest:
       type: object
@@ -858,7 +855,6 @@ components:
         - date_to
         - status
         - enforcement
-        - metadata
       properties:
         code:
           type: string
@@ -885,8 +881,6 @@ components:
           type: string
         enforcement:
           type: string
-        metadata:
-          type: object
 
     PatchBudgetRequest:
       type: object
@@ -916,8 +910,6 @@ components:
           type: string
         enforcement:
           type: string
-        metadata:
-          type: object
 
     BudgetList:
       type: object
@@ -997,7 +989,6 @@ components:
         - fiscal_period_id
         - fiscal_year
         - planned_amount
-        - metadata
       properties:
         budget_id:
           type: string
@@ -1029,8 +1020,6 @@ components:
           nullable: true
           type: string
           maxLength: 500
-        metadata:
-          type: object
 
     UpdateBudgetLineRequest:
       type: object
@@ -1040,7 +1029,6 @@ components:
         - fiscal_period_id
         - fiscal_year
         - planned_amount
-        - metadata
       properties:
         budget_id:
           type: string
@@ -1072,8 +1060,6 @@ components:
           nullable: true
           type: string
           maxLength: 500
-        metadata:
-          type: object
 
     PatchBudgetLineRequest:
       type: object
@@ -1108,8 +1094,6 @@ components:
           nullable: true
           type: string
           maxLength: 500
-        metadata:
-          type: object
 
     BudgetLineList:
       type: object

@@ -10,8 +10,8 @@ pub mod budget_line_handler;
 
 
 // Re-exports
-pub use budget_handler::{create_budget_routes, create_budget_read_routes, create_budget_write_routes};
-pub use budget_line_handler::{create_budget_line_routes, create_budget_line_read_routes, create_budget_line_write_routes};
+pub use budget_handler::{create_budget_routes, create_budget_read_routes, create_budget_write_routes, budget_permissions};
+pub use budget_line_handler::{create_budget_line_routes, create_budget_line_read_routes, create_budget_line_write_routes, budget_line_permissions};
 
 // This directory's extension (hand-written; ADR-0031).
 include!("mod.ext.rs");

@@ -98,8 +98,8 @@ pub struct PatchBudgetDto {
     #[cfg_attr(feature = "openapi", schema(example = "example"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    #[serde(default, deserialize_with = "crate::presentation::dto::double_option")]
+    pub description: Option<Option<String>>,
     #[cfg_attr(feature = "openapi", schema(example = 42))]
     #[serde(skip_serializing_if = "Option::is_none", alias = "fiscal_year")]
     pub fiscal_year: Option<i32>,
@@ -299,12 +299,4 @@ impl backbone_core::ApplyUpdateDto<UpdateBudgetDto> for Budget {
         Ok(self)
     }
 }
-
-// =============================================================================
-// Custom DTOs
-// =============================================================================
-
-// Add custom DTOs specific to Budget here.
-// This section will be preserved during regeneration.
-// >>> END CUSTOM DTOs
 

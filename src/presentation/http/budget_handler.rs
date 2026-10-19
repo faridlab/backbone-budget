@@ -81,6 +81,13 @@ impl axum::response::IntoResponse for BudgetError {
 // Route Configuration
 // =============================================================================
 
+/// The permissions this entity's generic routes require: `budget:<action>` for `read`, `create`,
+/// `update`, `delete`, `restore` and `purge`, with any rename the schema's `requires:` declares.
+pub fn budget_permissions() -> backbone_core::http::CrudPermissions {
+    backbone_core::http::CrudPermissions::new("budget")
+        .in_module("budget")
+}
+
 /// Create Axum router with all 16 Backbone endpoints for Budget.
 ///
 /// # Routes
@@ -110,21 +117,23 @@ impl axum::response::IntoResponse for BudgetError {
 /// let router = create_budget_routes(service);
 /// ```
 pub fn create_budget_routes(service: Arc<BudgetService>) -> Router {
-    BackboneCrudHandler::<BudgetService, Budget, CreateBudgetDto, UpdateBudgetDto, BudgetResponseDto>::routes(
+    BackboneCrudHandler::<BudgetService, Budget, CreateBudgetDto, UpdateBudgetDto, BudgetResponseDto>::routes_guarded(
         service,
         "/budgets",
+        budget_permissions(),
     )
 }
 
 /// Create Axum router with only the read (GET) endpoints for Budget.
 ///
-/// Safe for public, unauthenticated exposure (e.g., reference data).
+/// Each route requires the entity's `read` permission, so it needs an authenticated caller.
 /// Mutations must be served separately via `create_budget_write_routes`,
 /// typically wrapped in an auth middleware layer.
 pub fn create_budget_read_routes(service: Arc<BudgetService>) -> Router {
-    BackboneCrudHandler::<BudgetService, Budget, CreateBudgetDto, UpdateBudgetDto, BudgetResponseDto>::read_routes(
+    BackboneCrudHandler::<BudgetService, Budget, CreateBudgetDto, UpdateBudgetDto, BudgetResponseDto>::read_routes_guarded(
         service,
         "/budgets",
+        budget_permissions(),
     )
 }
 
@@ -140,9 +149,10 @@ pub fn create_budget_read_routes(service: Arc<BudgetService>) -> Router {
 /// service (e.g. a command router over its domain engine), serve THAT instead
 /// for any mutation that must respect domain rules.
 pub fn create_budget_write_routes(service: Arc<BudgetService>) -> Router {
-    BackboneCrudHandler::<BudgetService, Budget, CreateBudgetDto, UpdateBudgetDto, BudgetResponseDto>::write_routes(
+    BackboneCrudHandler::<BudgetService, Budget, CreateBudgetDto, UpdateBudgetDto, BudgetResponseDto>::write_routes_guarded(
         service,
         "/budgets",
+        budget_permissions(),
     )
 }
 
